@@ -184,7 +184,7 @@ fn setup_scene(
             parent.spawn((
                 Mesh3d(meshes.add(Sphere::new(0.25))),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::from(css::PEACH_PUFF),
+                    base_color: Color::from(css::PEACHPUFF),
                     ..default()
                 })),
                 Transform::from_xyz(0.0, 0.85, 0.0),
@@ -210,7 +210,7 @@ fn setup_scene(
             parent.spawn((
                 Mesh3d(meshes.add(Sphere::new(0.25))),
                 MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::from(css::PEACH_PUFF),
+                    base_color: Color::from(css::PEACHPUFF),
                     ..default()
                 })),
                 Transform::from_xyz(0.0, 0.85, 0.0),
@@ -254,10 +254,9 @@ fn setup_scene(
 }
 
 fn grab_cursor(mut windows: Query<&mut Window>) {
-    if let Ok(mut window) = windows.single_mut() {
-        window.cursor_options.grab_mode = CursorGrabMode::Locked;
-        window.cursor_options.visible = false;
-    }
+    let mut window = windows.single_mut();
+    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+    window.cursor_options.visible = false;
 }
 
 // --- Player Systems ---
@@ -268,12 +267,8 @@ fn player_movement(
     mut player_q: Query<&mut Transform, With<Player>>,
     camera_q: Query<&PlayerCamera>,
 ) {
-    let Ok(mut transform) = player_q.single_mut() else {
-        return;
-    };
-    let Ok(camera) = camera_q.single() else {
-        return;
-    };
+    let mut transform = player_q.single_mut();
+    let camera = camera_q.single();
 
     let speed = 5.0;
     let mut direction = Vec3::ZERO;
@@ -312,23 +307,20 @@ fn player_look(
     mut windows: Query<&mut Window>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
-        if let Ok(mut window) = windows.single_mut() {
-            match window.cursor_options.grab_mode {
-                CursorGrabMode::Locked => {
-                    window.cursor_options.grab_mode = CursorGrabMode::None;
-                    window.cursor_options.visible = true;
-                }
-                _ => {
-                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                    window.cursor_options.visible = false;
-                }
+        let mut window = windows.single_mut();
+        match window.cursor_options.grab_mode {
+            CursorGrabMode::Locked => {
+                window.cursor_options.grab_mode = CursorGrabMode::None;
+                window.cursor_options.visible = true;
+            }
+            _ => {
+                window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                window.cursor_options.visible = false;
             }
         }
     }
 
-    let Ok((mut camera, mut cam_transform)) = camera_q.single_mut() else {
-        return;
-    };
+    let (mut camera, mut cam_transform) = camera_q.single_mut();
 
     for ev in mouse_motion.read() {
         camera.yaw -= ev.delta.x * sensitivity.0;
@@ -353,9 +345,7 @@ fn interact_system(
         return;
     }
 
-    let Ok(player_tf) = player_q.single() else {
-        return;
-    };
+    let player_tf = player_q.single();
 
     let mut closest: Option<(&Interactable, f32)> = None;
 
@@ -383,9 +373,7 @@ fn proximity_hint_system(
     interactables: Query<(&Transform, &Interactable), Without<Player>>,
     mut last_hint: Local<Option<String>>,
 ) {
-    let Ok(player_tf) = player_q.single() else {
-        return;
-    };
+    let player_tf = player_q.single();
 
     let mut nearest: Option<(&Interactable, f32)> = None;
 
