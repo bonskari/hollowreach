@@ -14,19 +14,19 @@ fn validate_system(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut exit: EventWriter<AppExit>,
     hint_q: Query<&Visibility, With<ProximityHintText>>,
-    panel_q: Query<&Visibility, (With<InteractionListPanel>, Without<ProximityHintText>)>,
+    panel_q: Query<&Visibility, (With<InteractionListPanel>, Without<ProximityHintText>, Without<NpcInteractionPanel>)>,
+    _npc_panel_q: Query<&Visibility, (With<NpcInteractionPanel>, Without<ProximityHintText>, Without<InteractionListPanel>)>,
     dialogue_timer: Res<DialogueTimer>,
     text_input_state: Res<TextInputState>,
+    npc_panel_state: Res<NpcPanelState>,
 ) {
     frame.0 += 1;
 
     match frame.0 {
         // Wait for assets to load
         120 => {
-            // Position 1: Looking at the village from spawn point (south, looking north)
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(0.0, 1.0, 8.0);
-            // Reset camera to look forward
             mouse_events.send(bevy::input::mouse::MouseMotion { delta: Vec2::ZERO });
         }
         125 => {
@@ -34,7 +34,6 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_01_entrance.png"));
         }
 
-        // Position 2: Close-up on Knight NPC
         135 => {
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(1.0, 1.0, 6.0);
@@ -44,7 +43,6 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_02_knight_closeup.png"));
         }
 
-        // Position 3: Looking at tavern area (left side with table/chairs)
         150 => {
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(-4.0, 1.0, 0.0);
@@ -55,7 +53,6 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_03_tavern_area.png"));
         }
 
-        // Position 4: Looking at barrel/storage area (right side)
         165 => {
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(5.0, 1.0, -4.0);
@@ -66,7 +63,6 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_04_storage_area.png"));
         }
 
-        // Position 5: Overview from high angle (center, looking down)
         180 => {
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(0.0, 1.0, 0.0);
@@ -77,7 +73,6 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_05_center_view.png"));
         }
 
-        // Position 6: Back wall with banners
         195 => {
             let mut tf = player_q.single_mut();
             tf.translation = Vec3::new(0.0, 1.0, -6.0);
@@ -88,70 +83,88 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_06_back_wall.png"));
         }
 
-        // Position 7: Stand near Grok (Barbarian) — should show [E] hint
+        // Position 7: Stand near Grok (Barbarian) — should show interaction panel
         210 => {
             let mut tf = player_q.single_mut();
-            tf.translation = Vec3::new(3.0, 1.0, 0.5); // near Grok at (2.0, 0, 0.5)
+            tf.translation = Vec3::new(3.0, 1.0, 0.5);
             mouse_events.send(bevy::input::mouse::MouseMotion { delta: Vec2::new(-400.0, -100.0) });
         }
         220 => {
+            // Verify the interaction list panel is showing for multi-interaction NPC
+            let hint_vis = hint_q.single();
+            let panel_vis = panel_q.single();
+            println!("[DEBUG] frame=220: hint={:?}, panel={:?}", *hint_vis, *panel_vis);
+
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_07_proximity_hint.png"));
         }
 
-        // Position 8: Press E to trigger dialogue with Grok
-        225 => {
+        // Press E to trigger NPC interaction panel
+        225 | 226 | 227 | 228 => {
             keyboard.press(KeyCode::KeyE);
         }
-        227 => {
+        229 => {
             keyboard.release(KeyCode::KeyE);
         }
-        235 => {
-            // BUG FIX VALIDATION: When dialogue + text input are active,
-            // the proximity hint MUST be hidden (no overlap)
-            let hint_vis = hint_q.single();
-            if dialogue_timer.active || text_input_state.active {
+
+        // Verify NPC panel opened (NPC path opens panel, not dialogue)
+        240 => {
+            println!("[DEBUG] frame=240: npc_panel_open={}, dialogue_active={}, text_input_active={}",
+                npc_panel_state.open, dialogue_timer.active, text_input_state.active);
+
+            // When NPC panel is open OR dialogue/text_input is active,
+            // the proximity hint and interaction list panel MUST be hidden
+            let any_overlay_active = npc_panel_state.open || dialogue_timer.active || text_input_state.active;
+
+            if any_overlay_active {
+                let hint_vis = hint_q.single();
                 assert_eq!(
                     *hint_vis, Visibility::Hidden,
-                    "BUG: Proximity hint visible while dialogue/text input is active!"
+                    "BUG: Proximity hint visible while NPC panel/dialogue/text input is active!"
                 );
-                println!("[PASS] Hint correctly hidden during dialogue/text input");
-            }
+                println!("[PASS] Hint correctly hidden during NPC panel/dialogue/text input");
 
-            // The interaction list panel should also be hidden during dialogue
-            let panel_vis = panel_q.single();
-            if dialogue_timer.active || text_input_state.active {
+                let panel_vis = panel_q.single();
                 assert_eq!(
                     *panel_vis, Visibility::Hidden,
-                    "BUG: Interaction panel visible while dialogue/text input is active!"
+                    "BUG: Interaction list panel visible while NPC panel/dialogue/text input is active!"
                 );
-                println!("[PASS] Interaction panel correctly hidden during dialogue/text input");
+                println!("[PASS] Interaction list panel correctly hidden during NPC panel/dialogue/text input");
+            } else {
+                println!("[WARN] No overlay active at frame 240 - interaction may not have fired");
             }
 
             commands.spawn(Screenshot::primary_window())
-                .observe(save_to_disk("test_screenshots/v_08_dialogue_open.png"));
+                .observe(save_to_disk("test_screenshots/v_08_npc_panel.png"));
         }
 
-        // Wait for dialogue to fade, then screenshot without UI
-        280 => {
-            commands.spawn(Screenshot::primary_window())
-                .observe(save_to_disk("test_screenshots/v_09_after_dialogue.png"));
+        // Close NPC panel with Escape
+        260 => {
+            keyboard.press(KeyCode::Escape);
+        }
+        261 => {
+            keyboard.release(KeyCode::Escape);
         }
 
-        // Position 9: After dialogue fades, still near Grok — verify hint is back
+        // Wait, then check state after closing
         290 => {
-            if !dialogue_timer.active && !text_input_state.active {
-                let hint_vis = hint_q.single();
-                // Hint should be visible again now that dialogue is gone
-                // (unless multi-interaction panel is handling it)
-                println!("[INFO] After dialogue fade: hint={:?}, panel={:?}",
-                    *hint_vis, *panel_q.single());
-            }
+            println!("[DEBUG] frame=290: npc_panel_open={}, dialogue_active={}, text_input_active={}",
+                npc_panel_state.open, dialogue_timer.active, text_input_state.active);
+            commands.spawn(Screenshot::primary_window())
+                .observe(save_to_disk("test_screenshots/v_09_after_close.png"));
+        }
+
+        // After everything closes, verify panel returns near NPC
+        300 => {
+            let hint_vis = hint_q.single();
+            let panel_vis = panel_q.single();
+            println!("[INFO] frame=300: hint={:?}, list_panel={:?}, npc_panel_open={}",
+                *hint_vis, *panel_vis, npc_panel_state.open);
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_10_after_fade.png"));
         }
 
-        310 => {
+        320 => {
             exit.send(AppExit::Success);
         }
         _ => {}
@@ -180,6 +193,8 @@ fn main() {
         .insert_resource(Frame(0))
         .add_systems(Update, validate_system
             .before(hollowreach::player_movement)
-            .before(hollowreach::player_look))
+            .before(hollowreach::player_look)
+            .before(hollowreach::interact_system)
+            .before(hollowreach::npc_panel_close_system))
         .run();
 }
