@@ -78,7 +78,7 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
-                        padding: UiRect::all(Val::Px(30.0)),
+                        padding: UiRect::all(Val::Px(40.0)),
                         row_gap: Val::Px(12.0),
                         min_width: Val::Px(250.0),
                         ..default()

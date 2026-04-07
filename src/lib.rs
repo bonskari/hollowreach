@@ -1269,7 +1269,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     // Content area with padding inside border
                     box_parent
                         .spawn(Node {
-                            padding: UiRect::axes(Val::Px(24.0), Val::Px(16.0)),
+                            padding: UiRect::axes(Val::Px(32.0), Val::Px(24.0)),
                             flex_direction: FlexDirection::Column,
                             ..default()
                         })
@@ -1320,7 +1320,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         left: Val::Percent(30.0),
                         right: Val::Percent(30.0),
                         flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(12.0)),
+                        padding: UiRect::all(Val::Px(20.0)),
                         ..default()
                     },
                     Visibility::Hidden,
@@ -1330,7 +1330,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     // Content area
                     panel
                         .spawn(Node {
-                            padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                            padding: UiRect::axes(Val::Px(24.0), Val::Px(20.0)),
                             flex_direction: FlexDirection::Column,
                             ..default()
                         })
@@ -1400,7 +1400,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             Node {
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
-                                padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
+                                padding: UiRect::axes(Val::Px(48.0), Val::Px(32.0)),
                                 min_width: Val::Px(280.0),
                                 max_width: Val::Px(340.0),
                                 ..default()
@@ -1493,7 +1493,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     hint_parent
                         .spawn((
                             Node {
-                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                                padding: UiRect::axes(Val::Px(28.0), Val::Px(16.0)),
                                 ..default()
                             },
                             BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.85)),
