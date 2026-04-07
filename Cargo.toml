@@ -6,7 +6,17 @@ description = "A 3D first-person exploration game built with Bevy"
 license = "MIT"
 
 [dependencies]
-bevy = "0.15"
+bevy = { version = "0.15", features = ["jpeg"] }
+
+[[test]]
+name = "e2e"
+path = "tests/e2e.rs"
+harness = false
+
+[[test]]
+name = "validate"
+path = "tests/validate.rs"
+harness = false
 
 [profile.dev]
 opt-level = 1
