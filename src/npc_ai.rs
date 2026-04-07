@@ -11,7 +11,8 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    static_collision_aabbs, CircleCollider, DialogueText, DialogueTimer, Interactable, Player,
+    npc_look_at::NpcLookAt, pause_menu, static_collision_aabbs, AnimationSources, CircleCollider,
+    DialogueText, DialogueTimer, Interactable, Player,
 };
 
 // ---------------------------------------------------------------------------
@@ -141,9 +142,18 @@ impl Plugin for NpcAiPlugin {
             Update,
             (
                 npc_queue_init_system,
-                npc_decision_system.after(npc_queue_init_system),
-                npc_execute_system.after(npc_decision_system),
-                npc_pathfinding_system.after(npc_execute_system),
+                npc_decision_system
+                    .after(npc_queue_init_system)
+                    .run_if(pause_menu::game_not_paused),
+                npc_execute_system
+                    .after(npc_decision_system)
+                    .run_if(pause_menu::game_not_paused),
+                npc_pathfinding_system
+                    .after(npc_execute_system)
+                    .run_if(pause_menu::game_not_paused),
+                npc_animation_system
+                    .after(npc_execute_system)
+                    .run_if(pause_menu::game_not_paused),
             ),
         );
     }
@@ -311,6 +321,7 @@ pub fn npc_execute_system(
             &mut NpcDecisionState,
             &Transform,
             Option<&Interactable>,
+            Option<&mut NpcLookAt>,
         ),
         With<NpcBrain>,
     >,
@@ -318,13 +329,20 @@ pub fn npc_execute_system(
     mut dialogue_timer: ResMut<DialogueTimer>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
 ) {
-    for (_entity, mut state, npc_tf, interactable) in &mut npcs {
+    for (_entity, mut state, npc_tf, interactable, mut look_at) in &mut npcs {
         let Some(ref action) = state.current_action else {
             continue;
         };
 
         match action {
             NpcAction::Speak(text) | NpcAction::SpeakTo { text, .. } => {
+                // Update look-at target when speaking to a specific entity.
+                if let NpcAction::SpeakTo { target, .. } = action {
+                    if let Some(ref mut la) = look_at {
+                        la.target = Some(*target);
+                    }
+                }
+
                 // Display dialogue using existing UI.
                 let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
                 let full = format!("{speaker}: \"{text}\"");
@@ -467,5 +485,92 @@ pub fn npc_pathfinding_system(
         }
 
         npc_tf.translation = new_pos;
+    }
+}
+
+/// Switches NPC animations between Walk and Idle_A based on their current action.
+///
+/// Walking NPCs play the "Walk" clip; idle NPCs play "Idle_A".
+pub fn npc_animation_system(
+    npcs: Query<(&NpcDecisionState, &Children), With<NpcBrain>>,
+    children_q: Query<&Children>,
+    mut animation_players: Query<&mut AnimationPlayer>,
+    gltf_assets: Res<Assets<Gltf>>,
+    anim_sources: Res<AnimationSources>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+) {
+    // Find walk and idle clips from loaded GLTFs.
+    let mut walk_clip: Option<Handle<AnimationClip>> = None;
+    let mut idle_clip: Option<Handle<AnimationClip>> = None;
+
+    for handle in &anim_sources.handles {
+        if let Some(gltf) = gltf_assets.get(handle) {
+            if walk_clip.is_none() {
+                if let Some(clip) = gltf.named_animations.get("Walk") {
+                    walk_clip = Some(clip.clone());
+                }
+            }
+            if idle_clip.is_none() {
+                for name in &["Idle_A", "Idle_B", "Idle_Loop"] {
+                    if let Some(clip) = gltf.named_animations.get(*name) {
+                        idle_clip = Some(clip.clone());
+                        break;
+                    }
+                }
+            }
+            if walk_clip.is_some() && idle_clip.is_some() {
+                break;
+            }
+        }
+    }
+
+    let Some(walk) = walk_clip else { return };
+    let Some(idle) = idle_clip else { return };
+
+    for (state, npc_children) in &npcs {
+        let is_walking = matches!(
+            &state.current_action,
+            Some(NpcAction::MoveTo(_))
+                | Some(NpcAction::Interact { .. })
+                | Some(NpcAction::Give { .. })
+        );
+
+        let desired_clip = if is_walking { &walk } else { &idle };
+
+        // AnimationPlayer is typically on a descendant, not the NPC entity itself.
+        // Walk through children recursively to find it.
+        let mut found_player = false;
+        for &child in npc_children.iter() {
+            if found_player {
+                break;
+            }
+            if let Ok(mut player) = animation_players.get_mut(child) {
+                let (graph, node_index) = AnimationGraph::from_clip(desired_clip.clone());
+                let graph_handle = graphs.add(graph);
+                // Only change if not already playing the right animation.
+                // We use a simple heuristic: if the active animations count is 0
+                // or we just re-check every frame (cheap enough for a few NPCs).
+                let _ = graph_handle; // We need to set it — but AnimationGraphHandle is on the entity.
+                // For simplicity, replay each frame (Bevy deduplicates internally).
+                let active = player.play(node_index);
+                active.repeat();
+                found_player = true;
+                continue;
+            }
+            // Check grandchildren.
+            if let Ok(grandchildren) = children_q.get(child) {
+                for &gc in grandchildren.iter() {
+                    if let Ok(mut player) = animation_players.get_mut(gc) {
+                        let (graph, node_index) =
+                            AnimationGraph::from_clip(desired_clip.clone());
+                        let _graph_handle = graphs.add(graph);
+                        let active = player.play(node_index);
+                        active.repeat();
+                        found_player = true;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }

@@ -15,6 +15,7 @@ pub mod npc_ai;
 pub mod npc_look_at;
 pub mod pause_menu;
 pub mod text_input;
+pub mod tts;
 
 // --- Components ---
 
@@ -196,10 +197,6 @@ pub struct NpcPersonality {
     pub likes: Vec<String>,
     pub dislikes: Vec<String>,
 }
-
-/// NPC inventory (list of item IDs).
-#[derive(Component, Debug, Clone)]
-pub struct NpcInventory(pub Vec<String>);
 
 // --- Config Resources ---
 
@@ -473,20 +470,27 @@ impl Plugin for HollowreachPlugin {
             .add_systems(
                 Update,
                 (
-                    player_movement,
-                    player_collision.after(player_movement),
-                    player_look,
-                    interact_system,
-                    proximity_hint_system,
-                    dialogue_fade_system,
-                    start_npc_animations,
+                    player_movement
+                        .run_if(pause_menu::game_not_paused)
+                        .run_if(text_input::text_input_not_active),
+                    player_collision
+                        .after(player_movement)
+                        .run_if(pause_menu::game_not_paused),
+                    player_look
+                        .run_if(pause_menu::game_not_paused)
+                        .run_if(text_input::text_input_not_active),
+                    interact_system.run_if(pause_menu::game_not_paused),
+                    proximity_hint_system.run_if(pause_menu::game_not_paused),
+                    dialogue_fade_system.run_if(pause_menu::game_not_paused),
+                    start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
-                    ui_slide_in_system,
-                    ui_fade_in_system,
-                    ui_fade_out_system,
-                    intro_system,
-                    intro_sfx_system,
-                    footstep_sound_system,
+                    ui_slide_in_system.run_if(pause_menu::game_not_paused),
+                    ui_fade_in_system.run_if(pause_menu::game_not_paused),
+                    ui_fade_out_system.run_if(pause_menu::game_not_paused),
+                    intro_system.run_if(pause_menu::game_not_paused),
+                    intro_sfx_system.run_if(pause_menu::game_not_paused),
+                    footstep_sound_system.run_if(pause_menu::game_not_paused),
+                    handle_say_event.run_if(pause_menu::game_not_paused),
                 ),
             )
             .add_plugins(debug_overlay::DebugOverlayPlugin)
@@ -494,7 +498,12 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(npc_ai::NpcAiPlugin)
             .add_plugins(text_input::TextInputPlugin)
             .add_plugins(pause_menu::PauseMenuPlugin)
-            .add_plugins(npc_look_at::NpcLookAtPlugin);
+            .add_plugins(npc_look_at::NpcLookAtPlugin)
+            .add_plugins(tts::TtsPlugin)
+            .add_plugins(interactions::InteractionPlugin)
+            .add_plugins(context::ContextAreaPlugin)
+            .add_systems(Startup, spawn_context_areas.after(load_entity_configs))
+            .add_systems(Startup, populate_entity_id_map.after(spawn_from_configs));
     }
 }
 
@@ -670,6 +679,7 @@ pub fn spawn_from_configs(
             EntityId(config.id.clone()),
             EntityState(config.state.clone().unwrap_or_else(|| "default".to_string())),
             InteractionList(config.interactions.clone()),
+            context::InArea::default(),
         ));
 
         // Add collider if present
@@ -732,7 +742,10 @@ pub fn spawn_from_configs(
                 ));
             }
 
-            entity_cmd.insert(NpcInventory(config.inventory.clone()));
+            entity_cmd.insert((
+                inventory::NpcInventory { items: config.inventory.clone() },
+                npc_ai::NpcBrain,
+            ));
 
             // Register this character GLB as an animation source if not already done
             if !registered_anim_sources.contains(&config.model) {
@@ -777,6 +790,35 @@ pub fn spawn_from_configs(
     info!("Spawned {} entities from configs", entity_configs.0.len());
 }
 
+/// Spawns ContextArea entities from all loaded AreaConfigs.
+pub fn spawn_context_areas(
+    mut commands: Commands,
+    area_configs: Res<AreaConfigs>,
+) {
+    for config in area_configs.0.values() {
+        commands.spawn(context::ContextArea {
+            id: config.id.clone(),
+            label: config.label.clone(),
+            description: config.description.clone(),
+            min: Vec2::new(config.bounds.min[0], config.bounds.min[1]),
+            max: Vec2::new(config.bounds.max[0], config.bounds.max[1]),
+            adjacent_areas: config.adjacent_areas.clone(),
+        });
+        info!("Spawned context area: {}", config.id);
+    }
+}
+
+/// Populates the EntityIdMap resource so cross-entity effects can find targets.
+pub fn populate_entity_id_map(
+    query: Query<(Entity, &EntityId)>,
+    mut entity_id_map: ResMut<interactions::EntityIdMap>,
+) {
+    for (entity, eid) in &query {
+        entity_id_map.0.insert(eid.0.clone(), entity);
+    }
+    info!("EntityIdMap populated with {} entries", entity_id_map.0.len());
+}
+
 // --- Setup ---
 
 pub fn setup_scene(
@@ -808,6 +850,7 @@ pub fn setup_scene(
             Transform::from_xyz(0.0, 1.0, 5.0),
             Visibility::default(),
             inventory::PlayerInventory::default(),
+            context::InArea::default(),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -1465,14 +1508,22 @@ pub fn interact_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut cooldown: ResMut<InteractionCooldown>,
-    player_q: Query<(Entity, &Transform), With<Player>>,
-    interactables: Query<(Entity, &Transform, &Interactable), Without<Player>>,
+    player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
+    interactable_q: Query<
+        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>, Option<&NpcPersonality>),
+        Without<Player>,
+    >,
     mut look_at_q: Query<&mut npc_look_at::NpcLookAt>,
     mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
     mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
     mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
     mut dialogue_timer: ResMut<DialogueTimer>,
     mut commands: Commands,
+    mut tts_events: EventWriter<tts::TtsRequest>,
+    mut text_input_state: ResMut<text_input::TextInputState>,
+    global_flags: Res<interactions::GlobalFlags>,
+    selected: Res<interactions::SelectedInteraction>,
+    mut interaction_events: EventWriter<interactions::InteractionEvent>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -1483,30 +1534,192 @@ pub fn interact_system(
         return;
     }
 
-    let (player_entity, player_tf) = player_q.single();
+    let (player_entity, player_tf, player_inv) = player_q.single();
 
-    let mut closest: Option<(Entity, &Interactable, f32)> = None;
-    for (entity, tf, interactable) in &interactables {
+    // Find the closest entity that has either Interactable or InteractionList
+    let mut closest: Option<(Entity, f32)> = None;
+    for (entity, tf, opt_interactable, opt_list, _, _, _) in &interactable_q {
+        if opt_interactable.is_none() && opt_list.is_none() {
+            continue;
+        }
         let dist = player_tf.translation.distance(tf.translation);
         if dist < INTERACT_DISTANCE {
-            if closest.is_none() || dist < closest.unwrap().2 {
-                closest = Some((entity, interactable, dist));
+            if closest.is_none() || dist < closest.unwrap().1 {
+                closest = Some((entity, dist));
             }
         }
     }
 
-    if let Some((npc_entity, interactable, _)) = closest {
-        // Make NPC look at player
-        if let Ok(mut look_at) = look_at_q.get_mut(npc_entity) {
+    let Some((target_entity, _)) = closest else { return };
+
+    let Ok((_, _, opt_interactable, opt_interaction_list, opt_entity_state, opt_entity_id, opt_personality)) =
+        interactable_q.get(target_entity)
+    else {
+        return;
+    };
+
+    // Try the new InteractionList path first
+    if let Some(interaction_list) = opt_interaction_list {
+        let runtime_interactions = interactions::convert_interaction_list(interaction_list);
+        let entity_state_str = opt_entity_state
+            .map(|s| s.0.as_str())
+            .unwrap_or("default");
+        let actor_inventory: Vec<String> = player_inv
+            .map(|inv| inv.items.clone())
+            .unwrap_or_default();
+
+        // Build entity state map from interactable_q for OtherEntityState conditions
+        let all_entity_states: HashMap<String, String> = interactable_q
+            .iter()
+            .filter_map(|(_, _, _, _, opt_s, opt_eid, _)| {
+                match (opt_eid, opt_s) {
+                    (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+
+        let available = interactions::get_available_interactions(
+            &runtime_interactions,
+            entity_state_str,
+            &actor_inventory,
+            &global_flags.0,
+            Some(&all_entity_states),
+        );
+
+        if !available.is_empty() {
+            // Use the selected index (clamped)
+            let idx = selected.index.min(available.len().saturating_sub(1));
+            let chosen = &available[idx];
+
+            // Fire InteractionEvent
+            let effects = interactions::execute_reaction(&chosen.reaction);
+            let target_id = opt_entity_id
+                .map(|eid| eid.0.clone())
+                .unwrap_or_default();
+
+            interaction_events.send(interactions::InteractionEvent {
+                target: target_entity,
+                target_id,
+                actor: player_entity,
+                interaction_id: chosen.id.clone(),
+                effects: effects.clone(),
+            });
+
+            // Show dialogue for info_text or dialogue_prompt effects
+            let display_text = effects.iter().find_map(|e| {
+                match e.effect_type {
+                    interactions::ReactionEffectType::InfoText => e.text.clone(),
+                    interactions::ReactionEffectType::DialoguePrompt => e.prompt.clone(),
+                    _ => None,
+                }
+            });
+
+            // Determine name for the dialogue box
+            let display_name = if let Some(interactable) = opt_interactable {
+                interactable.name.clone()
+            } else {
+                chosen.label.clone()
+            };
+
+            if let Some(text_content) = display_text {
+                // Make NPC look at player
+                if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
+                    look_at.target = Some(player_entity);
+                }
+
+                let mut name_text = dialogue_name_q.single_mut();
+                **name_text = display_name;
+
+                let mut text = dialogue_text_q.single_mut();
+                **text = text_content.clone();
+
+                let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
+                *box_vis = Visibility::Visible;
+                commands.entity(box_entity).insert(UiSlideIn {
+                    elapsed: 0.0,
+                    duration: 0.35,
+                    start_offset: 80.0,
+                });
+
+                dialogue_timer.timer.reset();
+                dialogue_timer.active = true;
+
+                // NPC-specific: TTS + text input
+                let is_npc = opt_interactable.is_some_and(|i| i.is_npc);
+                if is_npc {
+                    let voice_profile = opt_personality
+                        .map(|p| p.voice_profile.clone())
+                        .unwrap_or_else(|| "default".to_string());
+                    tts_events.send(tts::TtsRequest {
+                        text: text_content,
+                        voice_profile,
+                        npc_entity: target_entity,
+                    });
+                    text_input::activate_text_input(&mut text_input_state, target_entity);
+                }
+            }
+
+            cooldown.0.reset();
+            return;
+        }
+    }
+
+    // Legacy fallback: use the old Interactable component
+    if let Some(interactable) = opt_interactable {
+        if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
             look_at.target = Some(player_entity);
         }
-        // Set name
         let mut name_text = dialogue_name_q.single_mut();
         **name_text = interactable.name.clone();
 
-        // Set dialogue
         let mut text = dialogue_text_q.single_mut();
         **text = interactable.dialogue.clone();
+
+        let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
+        *box_vis = Visibility::Visible;
+        commands.entity(box_entity).insert(UiSlideIn {
+            elapsed: 0.0,
+            duration: 0.35,
+            start_offset: 80.0,
+        });
+
+        dialogue_timer.timer.reset();
+        dialogue_timer.active = true;
+        cooldown.0.reset();
+
+        if interactable.is_npc {
+            let voice_profile = opt_personality
+                .map(|p| p.voice_profile.clone())
+                .unwrap_or_else(|| "default".to_string());
+            tts_events.send(tts::TtsRequest {
+                text: interactable.dialogue.clone(),
+                voice_profile,
+                npc_entity: target_entity,
+            });
+            text_input::activate_text_input(&mut text_input_state, target_entity);
+        }
+    }
+}
+
+/// Handles SayEvent — for now, displays "You said: ..." in the dialogue box.
+/// Later, the LLM system will generate NPC responses.
+pub fn handle_say_event(
+    mut say_events: EventReader<text_input::SayEvent>,
+    mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
+    mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
+    mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
+    mut dialogue_timer: ResMut<DialogueTimer>,
+    mut commands: Commands,
+) {
+    for event in say_events.read() {
+        // Set speaker name to "You"
+        let mut name_text = dialogue_name_q.single_mut();
+        **name_text = "You".to_string();
+
+        // Set dialogue text
+        let mut text = dialogue_text_q.single_mut();
+        **text = format!("You said: {}", event.text);
 
         // Show dialogue box with slide-in animation
         let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
@@ -1519,17 +1732,128 @@ pub fn interact_system(
 
         dialogue_timer.timer.reset();
         dialogue_timer.active = true;
-        cooldown.0.reset();
+    }
+}
+
+/// System that lets the player scroll through available interactions using
+/// number keys (1-9) or mouse wheel when near an entity with multiple options.
+pub fn interaction_scroll_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut scroll_events: EventReader<bevy::input::mouse::MouseWheel>,
+    mut selected: ResMut<interactions::SelectedInteraction>,
+    player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
+    interactable_q: Query<
+        (Entity, &Transform, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>),
+        Without<Player>,
+    >,
+    global_flags: Res<interactions::GlobalFlags>,
+) {
+    let (_player_entity, player_tf, player_inv) = player_q.single();
+
+    // Find closest entity with InteractionList
+    let mut closest: Option<(Entity, f32)> = None;
+    for (entity, tf, interaction_list, _, _) in &interactable_q {
+        if interaction_list.is_none() {
+            continue;
+        }
+        let dist = player_tf.translation.distance(tf.translation);
+        if dist < INTERACT_DISTANCE {
+            if closest.is_none() || dist < closest.unwrap().1 {
+                closest = Some((entity, dist));
+            }
+        }
+    }
+
+    let Some((target_entity, _)) = closest else {
+        // No entity nearby -- reset selection
+        if selected.target.is_some() {
+            selected.target = None;
+            selected.index = 0;
+        }
+        for _ in scroll_events.read() {}
+        return;
+    };
+
+    // Reset index if target changed
+    if selected.target != Some(target_entity) {
+        selected.target = Some(target_entity);
+        selected.index = 0;
+    }
+
+    // Count available interactions for clamping
+    let available_count = if let Ok((_, _, Some(interaction_list), opt_state, _)) =
+        interactable_q.get(target_entity)
+    {
+        let runtime = interactions::convert_interaction_list(interaction_list);
+        let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
+        let actor_inventory: Vec<String> = player_inv
+            .map(|inv| inv.items.clone())
+            .unwrap_or_default();
+        let all_entity_states: HashMap<String, String> = interactable_q
+            .iter()
+            .filter_map(|(_, _, _, opt_s, opt_eid)| {
+                match (opt_eid, opt_s) {
+                    (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
+                    _ => None,
+                }
+            })
+            .collect();
+        interactions::get_available_interactions(
+            &runtime,
+            entity_state_str,
+            &actor_inventory,
+            &global_flags.0,
+            Some(&all_entity_states),
+        )
+        .len()
+    } else {
+        0
+    };
+
+    if available_count == 0 {
+        for _ in scroll_events.read() {}
+        return;
+    }
+
+    // Number keys 1-9 for direct selection
+    let number_keys = [
+        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+        KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
+        KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9,
+    ];
+    for (i, key) in number_keys.iter().enumerate() {
+        if keyboard.just_pressed(*key) && i < available_count {
+            selected.index = i;
+            return;
+        }
+    }
+
+    // Mouse wheel scroll
+    for ev in scroll_events.read() {
+        if ev.y > 0.0 {
+            if selected.index > 0 {
+                selected.index -= 1;
+            }
+        } else if ev.y < 0.0 {
+            if selected.index + 1 < available_count {
+                selected.index += 1;
+            }
+        }
     }
 }
 
 pub fn proximity_hint_system(
-    player_q: Query<&Transform, With<Player>>,
-    interactables: Query<(&Transform, &Interactable), Without<Player>>,
+    player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
+    interactable_q: Query<
+        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>),
+        Without<Player>,
+    >,
     mut hint_q: Query<(&mut Visibility, &Children), With<ProximityHintText>>,
     children_q: Query<&Children>,
     mut text_q: Query<&mut Text>,
     dialogue_timer: Res<DialogueTimer>,
+    global_flags: Res<interactions::GlobalFlags>,
+    selected: Res<interactions::SelectedInteraction>,
 ) {
     // Hide hint while dialogue is showing
     if dialogue_timer.active {
@@ -1537,38 +1861,102 @@ pub fn proximity_hint_system(
         *visibility = Visibility::Hidden;
         return;
     }
-    let player_tf = player_q.single();
+    let (_player_entity, player_tf, player_inv) = player_q.single();
 
-    let mut nearest: Option<(&Interactable, f32)> = None;
-    for (tf, interactable) in &interactables {
+    // Find nearest entity with Interactable or InteractionList
+    let mut nearest: Option<(Entity, f32)> = None;
+    for (entity, tf, opt_interactable, opt_list, _, _) in &interactable_q {
+        if opt_interactable.is_none() && opt_list.is_none() {
+            continue;
+        }
         let dist = player_tf.translation.distance(tf.translation);
         if dist < INTERACT_DISTANCE {
             if nearest.is_none() || dist < nearest.unwrap().1 {
-                nearest = Some((interactable, dist));
+                nearest = Some((entity, dist));
             }
         }
     }
 
     let (mut visibility, children) = hint_q.single_mut();
-    if let Some((interactable, _)) = nearest {
-        // Find the Text entity (may be nested: ProximityHintText → bg_node → text)
-        fn find_text(entity: Entity, children_q: &Query<&Children>, text_q: &mut Query<&mut Text>) -> Option<Entity> {
-            if text_q.get(entity).is_ok() { return Some(entity); }
-            if let Ok(kids) = children_q.get(entity) {
-                for &kid in kids.iter() {
-                    if let Some(found) = find_text(kid, children_q, text_q) { return Some(found); }
+
+    if let Some((nearest_entity, _)) = nearest {
+        let Ok((_, _, opt_interactable, opt_list, opt_state, _)) = interactable_q.get(nearest_entity) else {
+            *visibility = Visibility::Hidden;
+            return;
+        };
+
+        // Build the hint text
+        let hint_text = if let Some(interaction_list) = opt_list {
+            let runtime = interactions::convert_interaction_list(interaction_list);
+            let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
+            let actor_inventory: Vec<String> = player_inv
+                .map(|inv| inv.items.clone())
+                .unwrap_or_default();
+            let all_entity_states: HashMap<String, String> = interactable_q
+                .iter()
+                .filter_map(|(_, _, _, _, opt_s, opt_eid)| {
+                    match (opt_eid, opt_s) {
+                        (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
+                        _ => None,
+                    }
+                })
+                .collect();
+
+            let available = interactions::get_available_interactions(
+                &runtime,
+                entity_state_str,
+                &actor_inventory,
+                &global_flags.0,
+                Some(&all_entity_states),
+            );
+
+            if available.is_empty() {
+                // No available interactions from InteractionList, try legacy
+                if let Some(interactable) = opt_interactable {
+                    format!("[E]  {}", interactable.name)
+                } else {
+                    String::new()
+                }
+            } else if available.len() == 1 {
+                format!("[E]  {}", available[0].label)
+            } else {
+                // Show all available interactions with selection indicator
+                let sel_idx = selected.index.min(available.len().saturating_sub(1));
+                let mut lines = Vec::new();
+                for (i, interaction) in available.iter().enumerate() {
+                    let marker = if i == sel_idx { ">" } else { " " };
+                    lines.push(format!("{} [{}] {}", marker, i + 1, interaction.label));
+                }
+                format!("[E] to interact  |  Scroll/1-{} to select\n{}", available.len(), lines.join("\n"))
+            }
+        } else if let Some(interactable) = opt_interactable {
+            format!("[E]  {}", interactable.name)
+        } else {
+            String::new()
+        };
+
+        if hint_text.is_empty() {
+            *visibility = Visibility::Hidden;
+        } else {
+            // Find the Text entity (may be nested: ProximityHintText -> bg_node -> text)
+            fn find_text(entity: Entity, children_q: &Query<&Children>, text_q: &mut Query<&mut Text>) -> Option<Entity> {
+                if text_q.get(entity).is_ok() { return Some(entity); }
+                if let Ok(kids) = children_q.get(entity) {
+                    for &kid in kids.iter() {
+                        if let Some(found) = find_text(kid, children_q, text_q) { return Some(found); }
+                    }
+                }
+                None
+            }
+            if let Some(&child) = children.first() {
+                if let Some(text_entity) = find_text(child, &children_q, &mut text_q) {
+                    if let Ok(mut text) = text_q.get_mut(text_entity) {
+                        **text = hint_text;
+                    }
                 }
             }
-            None
+            *visibility = Visibility::Visible;
         }
-        if let Some(&child) = children.first() {
-            if let Some(text_entity) = find_text(child, &children_q, &mut text_q) {
-                if let Ok(mut text) = text_q.get_mut(text_entity) {
-                    **text = format!("[E]  {}", interactable.name);
-                }
-            }
-        }
-        *visibility = Visibility::Visible;
     } else {
         *visibility = Visibility::Hidden;
     }

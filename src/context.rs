@@ -10,6 +10,10 @@ use bevy::prelude::*;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::inventory::PlayerInventory;
+use crate::npc_ai::NpcBrain;
+use crate::{EntityId, EntityState, InteractionList, NpcPersonality};
+
 // ---------------------------------------------------------------------------
 // Components
 // ---------------------------------------------------------------------------
@@ -104,43 +108,9 @@ pub struct NpcContextHash {
 // Marker / state components referenced by the snapshot builder
 // ---------------------------------------------------------------------------
 
-/// Unique string identifier for a world entity (e.g. `"door_tavern"`).
-#[derive(Component, Debug, Clone)]
-pub struct EntityId(pub String);
-
-/// Free-form state string (e.g. `"locked"`, `"open"`, `"idle"`).
-#[derive(Component, Debug, Clone)]
-pub struct EntityState(pub String);
-
-/// List of interaction IDs currently available on an entity.
-#[derive(Component, Debug, Clone)]
-pub struct InteractionList(pub Vec<String>);
-
-/// NPC personality — the `name` field is used in snapshots.
-#[derive(Component, Debug, Clone)]
-pub struct NpcPersonality {
-    pub name: String,
-    pub role: String,
-    pub traits: Vec<String>,
-    pub backstory: String,
-    pub speech_style: String,
-    pub knowledge: Vec<String>,
-    pub goals: Vec<String>,
-    pub likes: Vec<String>,
-    pub dislikes: Vec<String>,
-}
-
 /// What the NPC is currently doing, serialised as a string for the snapshot.
 #[derive(Component, Debug, Clone, Default)]
 pub struct NpcCurrentAction(pub String);
-
-/// The player's inventory, kept as simple item-ID strings.
-#[derive(Component, Debug, Clone, Default)]
-pub struct PlayerInventory(pub Vec<String>);
-
-/// Marker that identifies the NPC tag (used in queries).
-#[derive(Component, Debug, Clone)]
-pub struct Npc;
 
 // ---------------------------------------------------------------------------
 // Systems
@@ -202,7 +172,7 @@ pub fn build_area_context(
             &InArea,
             Option<&InteractionList>,
         ),
-        Without<Npc>,
+        Without<NpcBrain>,
     >,
     npcs: &Query<
         (
@@ -213,7 +183,7 @@ pub fn build_area_context(
             &NpcPersonality,
             Option<&NpcCurrentAction>,
         ),
-        With<Npc>,
+        With<NpcBrain>,
     >,
     player: &Query<(&Transform, &InArea, Option<&PlayerInventory>), With<super::Player>>,
 ) -> Option<AreaContext> {
@@ -230,7 +200,9 @@ pub fn build_area_context(
             id: eid.0.clone(),
             state: estate.0.clone(),
             position: discretise(tf.translation),
-            interactions: interactions.map(|i| i.0.clone()).unwrap_or_default(),
+            interactions: interactions
+                .map(|i| i.0.iter().map(|inter| inter.id.clone()).collect())
+                .unwrap_or_default(),
         });
     }
     // Sort for deterministic hashing.
@@ -261,7 +233,7 @@ pub fn build_area_context(
         }
         Some(PlayerSnapshot {
             position: discretise(tf.translation),
-            inventory: inv.map(|i| i.0.clone()).unwrap_or_default(),
+            inventory: inv.map(|i| i.items.clone()).unwrap_or_default(),
         })
     });
 

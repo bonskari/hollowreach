@@ -164,15 +164,23 @@ fn toggle_pause(
 }
 
 fn pause_button_system(
-    interaction_q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
+    mut interaction_q: Query<(&Interaction, &PauseButton, &mut BackgroundColor), Changed<Interaction>>,
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
     mut exit: EventWriter<AppExit>,
 ) {
-    for (interaction, button) in &interaction_q {
-        if *interaction != Interaction::Pressed {
-            continue;
+    for (interaction, button, mut bg) in &mut interaction_q {
+        match *interaction {
+            Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.25, 0.2, 0.35, 0.9));
+                continue;
+            }
+            Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.15, 0.12, 0.2, 0.8));
+                continue;
+            }
+            Interaction::Pressed => {}
         }
 
         match button.action {

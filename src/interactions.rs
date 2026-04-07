@@ -7,6 +7,9 @@
 use bevy::prelude::*;
 use std::collections::{HashMap, HashSet};
 
+use crate::inventory::{NpcInventory, PlayerInventory};
+use crate::EntityState;
+
 // ---------------------------------------------------------------------------
 // Data types — mirror the JSON schema from TECHNICAL_PLAN.md §1.2
 // When serde is added to Cargo.toml, add #[derive(Serialize, Deserialize)]
@@ -121,27 +124,6 @@ pub struct EntityConfig {
 // ---------------------------------------------------------------------------
 // ECS Components and Resources
 // ---------------------------------------------------------------------------
-
-/// Unique string identifier for a world entity, matching the JSON `id` field.
-#[derive(Component, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct EntityId(pub String);
-
-/// Current state of an entity (e.g. "locked", "open", "idle").
-/// Mutable at runtime as interactions change it.
-#[derive(Component, Debug, Clone)]
-pub struct EntityState(pub String);
-
-/// The list of interactions available on an entity, loaded from its config.
-#[derive(Component, Debug, Clone)]
-pub struct InteractionList(pub Vec<Interaction>);
-
-/// Player's inventory — list of item id strings.
-#[derive(Component, Debug, Clone, Default)]
-pub struct PlayerInventory(pub Vec<String>);
-
-/// NPC's inventory — list of item id strings.
-#[derive(Component, Debug, Clone, Default)]
-pub struct NpcInventory(pub Vec<String>);
 
 /// Global flags resource. Interactions can set/clear flags, and conditions can
 /// check them. Shared across all entities.
@@ -358,12 +340,12 @@ pub fn interaction_effect_system(
                     if let Some(ref item) = effect.item {
                         // Try player inventory first, then NPC inventory.
                         if let Ok(mut inv) = player_inventories.get_mut(event.actor) {
-                            if let Some(pos) = inv.0.iter().position(|i| i == item) {
-                                inv.0.remove(pos);
+                            if let Some(pos) = inv.items.iter().position(|i| i == item) {
+                                inv.items.remove(pos);
                             }
                         } else if let Ok(mut inv) = npc_inventories.get_mut(event.actor) {
-                            if let Some(pos) = inv.0.iter().position(|i| i == item) {
-                                inv.0.remove(pos);
+                            if let Some(pos) = inv.items.iter().position(|i| i == item) {
+                                inv.items.remove(pos);
                             }
                         }
                     }
@@ -372,9 +354,9 @@ pub fn interaction_effect_system(
                 ReactionEffectType::SpawnItem => {
                     if let Some(ref item) = effect.item {
                         if let Ok(mut inv) = player_inventories.get_mut(event.actor) {
-                            inv.0.push(item.clone());
+                            inv.items.push(item.clone());
                         } else if let Ok(mut inv) = npc_inventories.get_mut(event.actor) {
-                            inv.0.push(item.clone());
+                            inv.items.push(item.clone());
                         }
                     }
                 }
@@ -441,13 +423,115 @@ pub fn interaction_effect_system(
 /// Builds a snapshot of all entity states keyed by their EntityId.
 /// Useful for passing to `evaluate_conditions` for `OtherEntityState` checks.
 pub fn build_entity_state_map(
-    query: &Query<(&EntityId, &EntityState)>,
+    query: &Query<(&crate::EntityId, &crate::EntityState)>,
 ) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for (eid, state) in query.iter() {
         map.insert(eid.0.clone(), state.0.clone());
     }
     map
+}
+
+// ---------------------------------------------------------------------------
+// Conversion from JSON config types (defined in lib.rs) to runtime types
+// ---------------------------------------------------------------------------
+
+/// Convert a JSON condition type string to the runtime enum.
+pub fn parse_condition_type(s: &str) -> Option<ConditionType> {
+    match s {
+        "entity_state" => Some(ConditionType::EntityState),
+        "actor_has_item" => Some(ConditionType::ActorHasItem),
+        "flag_set" => Some(ConditionType::FlagSet),
+        "flag_not_set" => Some(ConditionType::FlagNotSet),
+        "other_entity_state" => Some(ConditionType::OtherEntityState),
+        _ => None,
+    }
+}
+
+/// Convert a JSON effect type string to the runtime enum.
+pub fn parse_effect_type(s: &str) -> Option<ReactionEffectType> {
+    match s {
+        "animation" => Some(ReactionEffectType::Animation),
+        "actor_animation" => Some(ReactionEffectType::ActorAnimation),
+        "sound" => Some(ReactionEffectType::Sound),
+        "state_change" => Some(ReactionEffectType::StateChange),
+        "target_state_change" => Some(ReactionEffectType::TargetStateChange),
+        "remove_item" => Some(ReactionEffectType::RemoveItem),
+        "spawn_item" => Some(ReactionEffectType::SpawnItem),
+        "set_flag" => Some(ReactionEffectType::SetFlag),
+        "clear_flag" => Some(ReactionEffectType::ClearFlag),
+        "dialogue_prompt" => Some(ReactionEffectType::DialoguePrompt),
+        "info_text" => Some(ReactionEffectType::InfoText),
+        "collider_change" => Some(ReactionEffectType::ColliderChange),
+        _ => None,
+    }
+}
+
+/// Convert a lib.rs JSON `Condition` to a runtime `Condition`.
+pub fn convert_condition(json_cond: &crate::Condition) -> Condition {
+    Condition {
+        condition_type: parse_condition_type(&json_cond.condition_type)
+            .unwrap_or(ConditionType::EntityState),
+        state: json_cond.state.clone(),
+        item: json_cond.item.clone(),
+        flag: json_cond.flag.clone(),
+        entity: json_cond.entity.clone(),
+    }
+}
+
+/// Convert a serde_json::Value reaction array into runtime `ReactionEffect`s.
+pub fn convert_reaction(reaction: &serde_json::Value) -> Vec<ReactionEffect> {
+    let arr = match reaction.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .filter_map(|v| {
+            let type_str = v.get("type")?.as_str()?;
+            let effect_type = parse_effect_type(type_str)?;
+            Some(ReactionEffect {
+                effect_type,
+                anim: v.get("anim").and_then(|v| v.as_str()).map(String::from),
+                asset: v.get("asset").and_then(|v| v.as_str()).map(String::from),
+                new_state: v.get("new_state").and_then(|v| v.as_str()).map(String::from),
+                entity: v.get("entity").and_then(|v| v.as_str()).map(String::from),
+                item: v.get("item").and_then(|v| v.as_str()).map(String::from),
+                flag: v.get("flag").and_then(|v| v.as_str()).map(String::from),
+                prompt: v.get("prompt").and_then(|v| v.as_str()).map(String::from),
+                text: v.get("text").and_then(|v| v.as_str()).map(String::from),
+                enabled: v.get("enabled").and_then(|v| v.as_bool()),
+            })
+        })
+        .collect()
+}
+
+/// Convert a lib.rs JSON `Interaction` to a runtime `Interaction`.
+pub fn convert_interaction(json_inter: &crate::Interaction) -> Interaction {
+    Interaction {
+        id: json_inter.id.clone(),
+        label: json_inter.label.clone(),
+        conditions: json_inter.conditions.iter().map(convert_condition).collect(),
+        reaction: convert_reaction(&json_inter.reaction),
+    }
+}
+
+/// Convert a lib.rs `InteractionList` to a Vec of runtime `Interaction`s.
+pub fn convert_interaction_list(list: &crate::InteractionList) -> Vec<Interaction> {
+    list.0.iter().map(convert_interaction).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Selected interaction tracking
+// ---------------------------------------------------------------------------
+
+/// Tracks which interaction the player has selected when near an entity with
+/// multiple available interactions. Reset when the player moves away.
+#[derive(Resource, Debug, Default)]
+pub struct SelectedInteraction {
+    /// The target entity currently in proximity (if any).
+    pub target: Option<Entity>,
+    /// Index into the available interactions list.
+    pub index: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -462,6 +546,7 @@ impl Plugin for InteractionPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GlobalFlags>()
             .init_resource::<EntityIdMap>()
+            .init_resource::<SelectedInteraction>()
             .add_event::<InteractionEvent>()
             .add_event::<ShowTextEvent>()
             .add_event::<PlaySoundEvent>()
