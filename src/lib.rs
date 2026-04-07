@@ -667,7 +667,16 @@ pub fn setup_scene(
     println!("==================");
 }
 
+/// Marker for the dialogue box container (the dark panel).
+#[derive(Component)]
+pub struct DialogueBox;
+
+/// Marker for the NPC name text inside the dialogue box.
+#[derive(Component)]
+pub struct DialogueNameText;
+
 pub fn setup_ui(mut commands: Commands) {
+    // Root UI container
     commands
         .spawn(Node {
             width: Val::Percent(100.0),
@@ -678,41 +687,96 @@ pub fn setup_ui(mut commands: Commands) {
             ..default()
         })
         .with_children(|parent| {
-            // Dialogue text — center of screen
+            // --- Dialogue box (RPG-style bottom panel) ---
+            parent
+                .spawn((
+                    DialogueBox,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        bottom: Val::Px(30.0),
+                        left: Val::Percent(10.0),
+                        right: Val::Percent(10.0),
+                        padding: UiRect::all(Val::Px(20.0)),
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.05, 0.05, 0.1, 0.85)),
+                    BorderRadius::all(Val::Px(8.0)),
+                    BorderColor(Color::srgba(0.6, 0.5, 0.3, 0.8)),
+                    Outline::new(Val::Px(2.0), Val::ZERO, Color::srgba(0.6, 0.5, 0.3, 0.8)),
+                    Visibility::Hidden,
+                ))
+                .with_children(|box_parent| {
+                    // NPC name (gold colored, bold-ish)
+                    box_parent.spawn((
+                        DialogueNameText,
+                        Text::new(""),
+                        TextFont {
+                            font_size: 22.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.9, 0.75, 0.3)),
+                        Node {
+                            margin: UiRect::bottom(Val::Px(8.0)),
+                            ..default()
+                        },
+                    ));
+
+                    // Dialogue text (white)
+                    box_parent.spawn((
+                        DialogueText,
+                        Text::new(""),
+                        TextFont {
+                            font_size: 18.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(0.95, 0.95, 0.95, 1.0)),
+                        TextLayout::new_with_justify(JustifyText::Left),
+                    ));
+                });
+
+            // --- Proximity hint (bottom center, styled key prompt) ---
+            parent
+                .spawn((
+                    ProximityHintText,
+                    Node {
+                        margin: UiRect::bottom(Val::Px(10.0)),
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
+                    BorderRadius::all(Val::Px(6.0)),
+                    Visibility::Hidden,
+                ))
+                .with_children(|hint_parent| {
+                    hint_parent.spawn((
+                        Text::new(""),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgba(1.0, 1.0, 0.8, 1.0)),
+                        TextLayout::new_with_justify(JustifyText::Center),
+                    ));
+                });
+
+            // --- Crosshair (small dot in center) ---
             parent.spawn((
-                DialogueText,
-                Text::new(""),
-                TextFont {
-                    font_size: 24.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                TextLayout::new_with_justify(JustifyText::Center),
                 Node {
                     position_type: PositionType::Absolute,
-                    top: Val::Percent(40.0),
-                    left: Val::Percent(10.0),
-                    right: Val::Percent(10.0),
+                    top: Val::Percent(50.0),
+                    left: Val::Percent(50.0),
+                    width: Val::Px(4.0),
+                    height: Val::Px(4.0),
+                    margin: UiRect {
+                        left: Val::Px(-2.0),
+                        top: Val::Px(-2.0),
+                        ..default()
+                    },
                     ..default()
                 },
-                Visibility::Hidden,
-            ));
-
-            // Proximity hint text — bottom center
-            parent.spawn((
-                ProximityHintText,
-                Text::new(""),
-                TextFont {
-                    font_size: 20.0,
-                    ..default()
-                },
-                TextColor(Color::srgba(1.0, 1.0, 0.6, 1.0)),
-                TextLayout::new_with_justify(JustifyText::Center),
-                Node {
-                    margin: UiRect::bottom(Val::Px(40.0)),
-                    ..default()
-                },
-                Visibility::Hidden,
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.5)),
+                BorderRadius::all(Val::Px(2.0)),
             ));
         });
 }
@@ -842,17 +906,16 @@ pub fn interact_system(
     mut cooldown: ResMut<InteractionCooldown>,
     player_q: Query<&Transform, With<Player>>,
     interactables: Query<(&Transform, &Interactable), Without<Player>>,
-    mut dialogue_q: Query<(&mut Text, &mut Visibility), With<DialogueText>>,
+    mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
+    mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
+    mut dialogue_box_q: Query<&mut Visibility, With<DialogueBox>>,
     mut dialogue_timer: ResMut<DialogueTimer>,
 ) {
-    // Always tick the cooldown timer
     cooldown.0.tick(time.delta());
 
     if !keyboard.just_pressed(KeyCode::KeyE) {
         return;
     }
-
-    // Check if cooldown is still active
     if !cooldown.0.finished() {
         return;
     }
@@ -860,7 +923,6 @@ pub fn interact_system(
     let player_tf = player_q.single();
 
     let mut closest: Option<(&Interactable, f32)> = None;
-
     for (tf, interactable) in &interactables {
         let dist = player_tf.translation.distance(tf.translation);
         if dist < INTERACT_DISTANCE {
@@ -871,20 +933,20 @@ pub fn interact_system(
     }
 
     if let Some((interactable, _)) = closest {
-        let display = if interactable.is_npc {
-            format!("[{}] says:\n{}", interactable.name, interactable.dialogue)
-        } else {
-            format!("[{}]:\n{}", interactable.name, interactable.dialogue)
-        };
+        // Set name
+        let mut name_text = dialogue_name_q.single_mut();
+        **name_text = interactable.name.clone();
 
-        let (mut text, mut visibility) = dialogue_q.single_mut();
-        **text = display;
-        *visibility = Visibility::Visible;
+        // Set dialogue
+        let mut text = dialogue_text_q.single_mut();
+        **text = interactable.dialogue.clone();
+
+        // Show dialogue box
+        let mut box_vis = dialogue_box_q.single_mut();
+        *box_vis = Visibility::Visible;
 
         dialogue_timer.timer.reset();
         dialogue_timer.active = true;
-
-        // Reset the cooldown timer
         cooldown.0.reset();
     }
 }
@@ -892,12 +954,12 @@ pub fn interact_system(
 pub fn proximity_hint_system(
     player_q: Query<&Transform, With<Player>>,
     interactables: Query<(&Transform, &Interactable), Without<Player>>,
-    mut hint_q: Query<(&mut Text, &mut Visibility), With<ProximityHintText>>,
+    mut hint_q: Query<(&mut Visibility, &Children), With<ProximityHintText>>,
+    mut text_q: Query<&mut Text>,
 ) {
     let player_tf = player_q.single();
 
     let mut nearest: Option<(&Interactable, f32)> = None;
-
     for (tf, interactable) in &interactables {
         let dist = player_tf.translation.distance(tf.translation);
         if dist < INTERACT_DISTANCE {
@@ -907,13 +969,15 @@ pub fn proximity_hint_system(
         }
     }
 
-    let (mut text, mut visibility) = hint_q.single_mut();
-
+    let (mut visibility, children) = hint_q.single_mut();
     if let Some((interactable, _)) = nearest {
-        **text = format!("Press E to interact with {}", interactable.name);
+        if let Some(&child) = children.first() {
+            if let Ok(mut text) = text_q.get_mut(child) {
+                **text = format!("[E]  {}", interactable.name);
+            }
+        }
         *visibility = Visibility::Visible;
     } else {
-        **text = String::new();
         *visibility = Visibility::Hidden;
     }
 }
@@ -921,7 +985,7 @@ pub fn proximity_hint_system(
 pub fn dialogue_fade_system(
     time: Res<Time>,
     mut dialogue_timer: ResMut<DialogueTimer>,
-    mut dialogue_q: Query<&mut Visibility, With<DialogueText>>,
+    mut box_q: Query<&mut Visibility, With<DialogueBox>>,
 ) {
     if !dialogue_timer.active {
         return;
@@ -931,7 +995,7 @@ pub fn dialogue_fade_system(
 
     if dialogue_timer.timer.finished() {
         dialogue_timer.active = false;
-        let mut visibility = dialogue_q.single_mut();
+        let mut visibility = box_q.single_mut();
         *visibility = Visibility::Hidden;
     }
 }
