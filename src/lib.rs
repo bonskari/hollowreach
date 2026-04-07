@@ -427,12 +427,14 @@ pub struct CircleCollider {
 
 // --- Footstep Audio ---
 
-/// Resource holding footstep sound handles and playback state.
+/// Resource holding footstep sound handles per surface type.
 #[derive(Resource)]
 pub struct FootstepAudio {
-    pub sounds: Vec<Handle<AudioSource>>,
+    pub stone: Vec<Handle<AudioSource>>,
+    pub grass: Vec<Handle<AudioSource>>,
+    pub wood: Vec<Handle<AudioSource>>,
+    pub dirt: Vec<Handle<AudioSource>>,
     pub timer: Timer,
-    pub next_index: usize,
 }
 
 // --- Constants ---
@@ -1300,7 +1302,7 @@ pub fn intro_system(
 
         // Start looping ambient audio (fire crackling in the tavern)
         let ambient_entity = commands.spawn((
-            AudioPlayer::<AudioSource>(asset_server.load("audio/ambient/fire_crackling_loop.wav")),
+            AudioPlayer::<AudioSource>(asset_server.load("audio/ambient/village_ambient.wav")),
             PlaybackSettings::LOOP,
         )).id();
         ambient_audio.entity = Some(ambient_entity);
@@ -1324,7 +1326,7 @@ pub fn intro_sfx_system(
     if intro.elapsed >= 1.2 {
         commands.spawn((
             IntroSfx,
-            AudioPlayer::<AudioSource>(asset_server.load("audio/cinematic/impact_dramatic.wav")),
+            AudioPlayer::<AudioSource>(asset_server.load("audio/cinematic/intro_sweep.wav")),
             PlaybackSettings::DESPAWN,
         ));
         sfx_state.played = true;
@@ -1660,15 +1662,15 @@ pub fn dialogue_fade_system(
 
 /// Startup system: load footstep audio files and insert the FootstepAudio resource.
 pub fn load_footstep_audio(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let sounds = vec![
-        asset_server.load("audio/footsteps/stone_walk_01.wav"),
-        asset_server.load("audio/footsteps/stone_walk_02.wav"),
-        asset_server.load("audio/footsteps/stone_walk_03.wav"),
-    ];
+    let load = |paths: &[&str]| -> Vec<Handle<AudioSource>> {
+        paths.iter().map(|p| asset_server.load(format!("audio/footsteps/{p}"))).collect()
+    };
     commands.insert_resource(FootstepAudio {
-        sounds,
+        stone: load(&["stone_walk_01.wav", "stone_walk_02.wav", "stone_walk_03.wav"]),
+        grass: load(&["grass_walk_01.wav", "grass_walk_02.wav", "grass_walk_03.wav"]),
+        wood: load(&["wood_walk_01.wav", "wood_walk_02.wav", "wood_walk_03.wav"]),
+        dirt: load(&["dirt_walk_01.wav", "dirt_walk_02.wav", "dirt_walk_03.wav", "dirt_walk_04.wav", "dirt_walk_05.wav"]),
         timer: Timer::from_seconds(0.4, TimerMode::Repeating),
-        next_index: 0,
     });
 }
 
@@ -1680,6 +1682,7 @@ pub fn footstep_sound_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     intro: Res<IntroSequence>,
     mut footsteps: ResMut<FootstepAudio>,
+    player_q: Query<&Transform, With<Player>>,
 ) {
     // Don't play footsteps during the intro
     if intro.active {
@@ -1693,7 +1696,6 @@ pub fn footstep_sound_system(
         || keyboard.pressed(KeyCode::KeyD);
 
     if !moving {
-        // Reset the timer so the first step plays immediately when walking resumes
         footsteps.timer.reset();
         return;
     }
@@ -1701,10 +1703,17 @@ pub fn footstep_sound_system(
     footsteps.timer.tick(time.delta());
 
     if footsteps.timer.just_finished() {
-        let idx = footsteps.next_index % footsteps.sounds.len();
-        let sound = footsteps.sounds[idx].clone();
-        footsteps.next_index = footsteps.next_index.wrapping_add(1);
+        // Determine surface type based on player position
+        // Floor tiles cover -8..8, outside is grass
+        let player_pos = player_q.single();
+        let on_tiles = player_pos.translation.x.abs() < 9.0 && player_pos.translation.z.abs() < 9.0;
 
-        commands.spawn(AudioPlayer(sound));
+        let sounds = if on_tiles { &footsteps.stone } else { &footsteps.grass };
+
+        if !sounds.is_empty() {
+            // Random selection
+            let idx = (time.elapsed_secs() * 1000.0) as usize % sounds.len();
+            commands.spawn(AudioPlayer(sounds[idx].clone()));
+        }
     }
 }
