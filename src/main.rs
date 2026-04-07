@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::window::WindowMode;
 use hollowreach::HollowreachPlugin;
 
 fn main() {
@@ -6,7 +7,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Hollowreach".into(),
-                resolution: (1280.0, 720.0).into(),
+                mode: WindowMode::BorderlessFullscreen(MonitorSelection::Current),
                 ..default()
             }),
             ..default()

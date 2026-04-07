@@ -12,6 +12,7 @@ pub mod debug_overlay;
 pub mod interactions;
 pub mod inventory;
 pub mod npc_ai;
+pub mod pause_menu;
 pub mod text_input;
 
 // --- Components ---
@@ -490,7 +491,8 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(debug_overlay::DebugOverlayPlugin)
             .add_plugins(inventory::InventoryPlugin)
             .add_plugins(npc_ai::NpcAiPlugin)
-            .add_plugins(text_input::TextInputPlugin);
+            .add_plugins(text_input::TextInputPlugin)
+            .add_plugins(pause_menu::PauseMenuPlugin);
     }
 }
 
@@ -1004,8 +1006,8 @@ pub fn setup_scene(
 
     // --- Lighting ---
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.7, 0.75, 0.9),
-        brightness: 150.0,
+        color: Color::srgb(0.5, 0.55, 0.7),
+        brightness: 80.0,
     });
 
     // Sun
@@ -1439,22 +1441,7 @@ pub fn player_look(
     mut mouse_motion: EventReader<MouseMotion>,
     sensitivity: Res<MouseSensitivity>,
     mut camera_q: Query<(&mut PlayerCamera, &mut Transform)>,
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut windows: Query<&mut Window>,
 ) {
-    if keyboard.just_pressed(KeyCode::Escape) {
-        let mut window = windows.single_mut();
-        match window.cursor_options.grab_mode {
-            CursorGrabMode::Locked => {
-                window.cursor_options.grab_mode = CursorGrabMode::None;
-                window.cursor_options.visible = true;
-            }
-            _ => {
-                window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                window.cursor_options.visible = false;
-            }
-        }
-    }
 
     let (mut camera, mut cam_transform) = camera_q.single_mut();
 
