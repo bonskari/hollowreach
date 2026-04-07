@@ -93,7 +93,7 @@ pub struct TextInputLabel;
 pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     let panel_image = asset_server.load("ui/Panel/panel-025.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(20.0),
+        border: BorderRect::square(16.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
         max_corner_scale: 1.0,

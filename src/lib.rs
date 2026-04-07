@@ -1221,7 +1221,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     let panel_image = asset_server.load("ui/Panel/panel-025.png");
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(20.0),
+        border: BorderRect::square(16.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
         max_corner_scale: 1.0,
@@ -1242,6 +1242,12 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent
                 .spawn((
                     DialogueBox,
+                    ImageNode {
+                        image: panel_image.clone(),
+                        image_mode: NodeImageMode::Sliced(slicer.clone()),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                        ..default()
+                    },
                     Node {
                         position_type: PositionType::Absolute,
                         bottom: Val::Px(30.0),
@@ -1250,28 +1256,10 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
-                    // Panel image handles background
                     Visibility::Hidden,
                     ZIndex(10),
                 ))
                 .with_children(|box_parent| {
-                    // 9-slice border overlay
-                    box_parent.spawn((
-                        ImageNode {
-                            image: panel_image.clone(),
-                            image_mode: NodeImageMode::Sliced(slicer.clone()),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.5),
-                            ..default()
-                        },
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: Val::Px(-4.0),
-                            left: Val::Px(-4.0),
-                            right: Val::Px(-4.0),
-                            bottom: Val::Px(-4.0),
-                            ..default()
-                        },
-                    ));
 
                     // Content area with padding inside border
                     box_parent
@@ -1315,38 +1303,25 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
             parent
                 .spawn((
                     InteractionListPanel,
+                    ImageNode {
+                        image: panel_image.clone(),
+                        image_mode: NodeImageMode::Sliced(slicer.clone()),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                        ..default()
+                    },
                     Node {
                         position_type: PositionType::Absolute,
                         bottom: Val::Px(50.0),
                         left: Val::Percent(30.0),
                         right: Val::Percent(30.0),
                         flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(0.0)),
+                        padding: UiRect::all(Val::Px(12.0)),
                         ..default()
                     },
-                    // Panel image handles background
                     Visibility::Hidden,
                     ZIndex(5),
                 ))
                 .with_children(|panel| {
-                    // 9-slice border overlay
-                    panel.spawn((
-                        ImageNode {
-                            image: panel_image.clone(),
-                            image_mode: NodeImageMode::Sliced(slicer.clone()),
-                            color: Color::srgba(0.0, 0.0, 0.0, 0.5),
-                            ..default()
-                        },
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: Val::Px(-4.0),
-                            left: Val::Px(-4.0),
-                            right: Val::Px(-4.0),
-                            bottom: Val::Px(-4.0),
-                            ..default()
-                        },
-                    ));
-
                     // Content area
                     panel
                         .spawn(Node {
@@ -1411,6 +1386,12 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     // Panel container
                     overlay
                         .spawn((
+                            ImageNode {
+                                image: panel_image.clone(),
+                                image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                                ..default()
+                            },
                             Node {
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
@@ -1419,27 +1400,8 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 max_width: Val::Px(340.0),
                                 ..default()
                             },
-                            // Panel image handles background
                         ))
                         .with_children(|panel| {
-                            // 9-slice border
-                            panel.spawn((
-                                ImageNode {
-                                    image: panel_image.clone(),
-                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                    color: Color::srgba(0.0, 0.0, 0.0, 0.5),
-                                    ..default()
-                                },
-                                Node {
-                                    position_type: PositionType::Absolute,
-                                    top: Val::Px(-4.0),
-                                    left: Val::Px(-4.0),
-                                    right: Val::Px(-4.0),
-                                    bottom: Val::Px(-4.0),
-                                    ..default()
-                                },
-                            ));
-
                             // NPC name (gold)
                             panel.spawn((
                                 NpcPanelName,
