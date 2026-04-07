@@ -195,6 +195,30 @@ pub struct IntroTextTop;
 #[derive(Component)]
 pub struct IntroTextTitle;
 
+// --- Audio ---
+
+/// Resource that tracks the ambient background audio entity.
+#[derive(Resource, Default)]
+pub struct AmbientAudio {
+    pub entity: Option<Entity>,
+}
+
+/// Marker for the cinematic intro sound effect.
+#[derive(Component)]
+pub struct IntroSfx;
+
+/// Tracks whether the intro sound has been triggered.
+#[derive(Resource)]
+pub struct IntroSfxState {
+    pub played: bool,
+}
+
+impl Default for IntroSfxState {
+    fn default() -> Self {
+        Self { played: false }
+    }
+}
+
 // --- Interaction cooldown ---
 
 /// Resource that tracks a cooldown timer between interactions.
@@ -215,6 +239,16 @@ pub struct CircleCollider {
     pub radius: f32,
 }
 
+// --- Footstep Audio ---
+
+/// Resource holding footstep sound handles and playback state.
+#[derive(Resource)]
+pub struct FootstepAudio {
+    pub sounds: Vec<Handle<AudioSource>>,
+    pub timer: Timer,
+    pub next_index: usize,
+}
+
 // --- Constants ---
 
 pub const INTERACT_DISTANCE: f32 = 3.5;
@@ -231,7 +265,9 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<DialogueTimer>()
             .init_resource::<AnimationSources>()
             .init_resource::<IntroSequence>()
-            .add_systems(Startup, (setup_scene, grab_cursor, setup_ui, setup_intro))
+            .init_resource::<AmbientAudio>()
+            .init_resource::<IntroSfxState>()
+            .add_systems(Startup, (setup_scene, grab_cursor, setup_ui, setup_intro, load_footstep_audio))
             .add_systems(
                 Update,
                 (
@@ -247,6 +283,8 @@ impl Plugin for HollowreachPlugin {
                     ui_fade_in_system,
                     ui_fade_out_system,
                     intro_system,
+                    intro_sfx_system,
+                    footstep_sound_system,
                 ),
             );
     }
@@ -964,8 +1002,10 @@ pub fn intro_system(
     time: Res<Time>,
     mut intro: ResMut<IntroSequence>,
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    mut ambient_audio: ResMut<AmbientAudio>,
     overlay_q: Query<Entity, With<IntroOverlay>>,
-    text_q: Query<Entity, Or<(With<IntroTextTop>, With<IntroTextTitle>)>>,
+    _text_q: Query<Entity, Or<(With<IntroTextTop>, With<IntroTextTitle>)>>,
     // Also fade shadows — all Text children of the overlay that have UiFadeIn
     fadeable_q: Query<Entity, With<UiFadeIn>>,
 ) {
@@ -983,12 +1023,42 @@ pub fn intro_system(
         }
     }
 
-    // At 4.8s: despawn entire overlay (removes all children)
+    // At 4.8s: despawn entire overlay (removes all children), start ambient audio
     if intro.elapsed > 4.8 && intro.elapsed - time.delta_secs() <= 4.8 {
         if let Ok(overlay) = overlay_q.get_single() {
             commands.entity(overlay).despawn_recursive();
         }
+
+        // Start looping ambient audio (fire crackling in the tavern)
+        let ambient_entity = commands.spawn((
+            AudioPlayer::<AudioSource>(asset_server.load("audio/ambient/fire_crackling_loop.wav")),
+            PlaybackSettings::LOOP,
+        )).id();
+        ambient_audio.entity = Some(ambient_entity);
+
         intro.active = false;
+    }
+}
+
+/// Plays a cinematic impact sound when "Hollowreach" title appears (at ~1.2s into the intro).
+pub fn intro_sfx_system(
+    intro: Res<IntroSequence>,
+    mut sfx_state: ResMut<IntroSfxState>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+) {
+    if !intro.active || sfx_state.played {
+        return;
+    }
+
+    // Trigger the impact sound when the "Hollowreach" title fades in (1.2s)
+    if intro.elapsed >= 1.2 {
+        commands.spawn((
+            IntroSfx,
+            AudioPlayer::<AudioSource>(asset_server.load("audio/cinematic/impact_dramatic.wav")),
+            PlaybackSettings::DESPAWN,
+        ));
+        sfx_state.played = true;
     }
 }
 
@@ -1314,5 +1384,58 @@ pub fn dialogue_fade_system(
         dialogue_timer.active = false;
         let mut visibility = box_q.single_mut();
         *visibility = Visibility::Hidden;
+    }
+}
+
+// --- Footstep systems ---
+
+/// Startup system: load footstep audio files and insert the FootstepAudio resource.
+pub fn load_footstep_audio(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let sounds = vec![
+        asset_server.load("audio/footsteps/stone_walk_01.wav"),
+        asset_server.load("audio/footsteps/stone_walk_02.wav"),
+        asset_server.load("audio/footsteps/stone_walk_03.wav"),
+    ];
+    commands.insert_resource(FootstepAudio {
+        sounds,
+        timer: Timer::from_seconds(0.4, TimerMode::Repeating),
+        next_index: 0,
+    });
+}
+
+/// Update system: play footstep sounds at regular intervals while the player is walking.
+/// Does not play during the intro sequence.
+pub fn footstep_sound_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    intro: Res<IntroSequence>,
+    mut footsteps: ResMut<FootstepAudio>,
+) {
+    // Don't play footsteps during the intro
+    if intro.active {
+        return;
+    }
+
+    // Check if the player is pressing any movement key
+    let moving = keyboard.pressed(KeyCode::KeyW)
+        || keyboard.pressed(KeyCode::KeyS)
+        || keyboard.pressed(KeyCode::KeyA)
+        || keyboard.pressed(KeyCode::KeyD);
+
+    if !moving {
+        // Reset the timer so the first step plays immediately when walking resumes
+        footsteps.timer.reset();
+        return;
+    }
+
+    footsteps.timer.tick(time.delta());
+
+    if footsteps.timer.just_finished() {
+        let idx = footsteps.next_index % footsteps.sounds.len();
+        let sound = footsteps.sounds[idx].clone();
+        footsteps.next_index = footsteps.next_index.wrapping_add(1);
+
+        commands.spawn(AudioPlayer(sound));
     }
 }

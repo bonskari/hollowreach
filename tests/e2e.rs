@@ -656,7 +656,8 @@ fn main() {
                 .set(bevy::log::LogPlugin {
                     level: bevy::log::Level::WARN,
                     ..default()
-                }),
+                })
+                ,
         )
         .add_plugins(HollowreachPlugin)
         .insert_resource(TestRunner::new())

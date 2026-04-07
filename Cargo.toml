@@ -6,7 +6,7 @@ description = "A 3D first-person exploration game built with Bevy"
 license = "MIT"
 
 [dependencies]
-bevy = { version = "0.15", features = ["jpeg"] }
+bevy = { version = "0.15", features = ["jpeg", "wav"] }
 
 [[test]]
 name = "e2e"
