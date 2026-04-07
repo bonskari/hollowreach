@@ -43,9 +43,9 @@ impl Plugin for PauseMenuPlugin {
 }
 
 fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let border_image = asset_server.load("ui/Border/panel-border-025.png");
+    let panel_image = asset_server.load("ui/Panel/panel-025.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(16.0),
+        border: BorderRect::square(20.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
         max_corner_scale: 1.0,
@@ -84,7 +84,7 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                     // 9-slice border
                     panel.spawn((
                         ImageNode {
-                            image: border_image.clone(),
+                            image: panel_image.clone(),
                             image_mode: NodeImageMode::Sliced(slicer.clone()),
                             ..default()
                         },
