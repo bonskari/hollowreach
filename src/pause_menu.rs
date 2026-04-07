@@ -43,7 +43,12 @@ impl Plugin for PauseMenuPlugin {
 }
 
 fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image = asset_server.load("ui/Panel/panel-012.png");
+    let panel_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
+        s.sampler = bevy::image::ImageSampler::nearest();
+    });
+    let button_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
+        s.sampler = bevy::image::ImageSampler::nearest();
+    });
     let button_image: Handle<Image> = asset_server.load("ui/Panel/panel-003.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(18.0),

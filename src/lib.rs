@@ -1218,7 +1218,12 @@ pub struct DialogueBox;
 pub struct DialogueNameText;
 
 pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image = asset_server.load("ui/Panel/panel-012.png");
+    let panel_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
+        s.sampler = bevy::image::ImageSampler::nearest();
+    });
+    let button_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
+        s.sampler = bevy::image::ImageSampler::nearest();
+    });
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(18.0),
@@ -1440,24 +1445,25 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                     .spawn((
                                         NpcPanelButton { action },
                                         Button,
+                                        ImageNode {
+                                            image: button_image.clone(),
+                                            image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                            ..default()
+                                        },
                                         Node {
                                             width: Val::Px(220.0),
                                             height: Val::Px(38.0),
                                             justify_content: JustifyContent::Center,
                                             align_items: AlignItems::Center,
                                             margin: UiRect::vertical(Val::Px(4.0)),
-                                            border: UiRect::all(Val::Px(1.0)),
                                             ..default()
                                         },
-                                        BackgroundColor(Color::srgba(0.12, 0.1, 0.16, 0.85)),
-                                        BorderColor(Color::srgba(0.4, 0.35, 0.25, 0.6)),
-                                        BorderRadius::all(Val::Px(4.0)),
                                     ))
                                     .with_children(|btn| {
                                         btn.spawn((
                                             Text::new(label),
                                             TextFont { font_size: 17.0, ..default() },
-                                            TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                                            TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
                                         ));
                                     });
                             }
