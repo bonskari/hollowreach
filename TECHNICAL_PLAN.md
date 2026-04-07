@@ -26,6 +26,8 @@ Every object in the world. Stored as `assets/entities/<id>.json`.
 - `id` — unique string
 - `type` — `"prop"`, `"item"`, `"npc"`, `"furniture"`
 - `model` — path to GLTF/GLB
+- `position` — [x, y, z] world position
+- `rotation_y` — facing direction in degrees
 - `state` — current state string, free-form (e.g. `"locked"`, `"open"`, `"empty"`)
 - `collider` — optional collision shape
 - `interactions` — list of available interactions (see 1.2)
@@ -41,16 +43,13 @@ Every object in the world. Stored as `assets/entities/<id>.json`.
     { "type": "entity_state", "state": "locked" },
     { "type": "actor_has_item", "item": "iron_key" }
   ],
-  "reaction": {
-    "animation": "door_unlock",
-    "sound": "lock_click",
-    "state_change": "unlocked",
-    "remove_item": "iron_key",
-    "set_flag": "tavern_door_unlocked",
-    "target_entity": null,
-    "target_state": null,
-    "dialogue_prompt": null
-  }
+  "reaction": [
+    { "type": "sound", "asset": "lock_click" },
+    { "type": "animation", "anim": "door_unlock" },
+    { "type": "state_change", "new_state": "unlocked" },
+    { "type": "remove_item", "item": "iron_key" },
+    { "type": "set_flag", "flag": "tavern_door_unlocked" }
+  ]
 }
 ```
 
@@ -61,17 +60,19 @@ Every object in the world. Stored as `assets/entities/<id>.json`.
 - `flag_not_set` — global flag must not be set
 - `other_entity_state` — another entity (by ID) must be in state X
 
-**Reaction fields** (all optional, null = skip):
-- `animation` — animation to play on the entity
-- `actor_animation` — animation to play on the character doing it
-- `sound` — sound effect to play
-- `state_change` — new state for this entity
-- `target_entity` + `target_state` — change another entity's state (lever → gate)
-- `remove_item` — consume item from actor's inventory
-- `spawn_item` — give item to actor
-- `set_flag` — set a global flag
-- `dialogue_prompt` — LLM prompt for generating a spoken response
-- `info_text` — static text to show (for informational interactions like "Locked")
+**Reaction** is a list of effects, executed in order. Each effect has a `type`:
+- `animation` — play animation on this entity (`anim` field)
+- `actor_animation` — play animation on the character doing it (`anim` field)
+- `sound` — play sound effect (`asset` field)
+- `state_change` — set new state for this entity (`new_state` field)
+- `target_state_change` — change another entity's state (`entity` + `new_state` fields)
+- `remove_item` — consume item from actor's inventory (`item` field)
+- `spawn_item` — give item to actor (`item` field)
+- `set_flag` — set a global flag (`flag` field)
+- `clear_flag` — clear a global flag (`flag` field)
+- `dialogue_prompt` — LLM generates a spoken response (`prompt` field)
+- `info_text` — show static text (`text` field)
+- `collider_change` — modify entity's collider (`enabled` field, for doors opening)
 
 ### 1.3 NPC Config
 
@@ -121,7 +122,7 @@ Entities that characters can "use" (sit on, drink from, etc.) define use positio
       "actor_animation": "Sit_Idle",
       "enter_animation": "Sit_Down",
       "exit_animation": "Stand_Up",
-      "occupied_by": null
+      "_note": "occupied_by is runtime ECS state, not in JSON"
     }
   ]
 }
@@ -139,12 +140,12 @@ Defines a region of the world. Stored as `assets/areas/<id>.json`.
   "label": "The Tavern",
   "bounds": { "min": [-8, -4], "max": [-2, 2] },
   "description": "A warm corner with tables, stools, and the smell of ale.",
-  "entities": ["table_medium_01", "stool_01", "stool_02", "mug_01", "candle_01"],
-  "adjacent_areas": ["courtyard", "sleeping_quarters"]
+  "adjacent_areas": ["courtyard", "sleeping_quarters"],
+  "ambient_sound": "tavern_ambience"
 }
 ```
 
-At runtime, the system collects all entities in the area + all NPCs present and builds the LLM context.
+**No static entity list.** At runtime, the system queries all entities whose position falls within `bounds` and all NPCs currently in the area. This is fully dynamic — moving an entity into the area automatically includes it in the context. The context area only defines the region, its description, and adjacency for NPC movement.
 
 ---
 
@@ -254,29 +255,50 @@ Entities here:
 - Yesterday: You saw Whisper sneaking near the storage.
 
 [INSTRUCTION]
-Choose ONE action. Respond in this exact format:
-ACTION: <action_type> <target_id> [optional speech]
+Choose ONE action. You may also say something while acting.
+Respond in this exact format:
+
+SAY: "<optional speech, or empty>"
+ACTION: <action_type> <target_id>
 
 Valid actions:
 - INTERACT <entity_id> <interaction_id>
 - MOVE_TO <entity_id>
-- SPEAK "<text>"
-- SPEAK_TO <npc_id> "<text>"
-- GIVE <npc_id_or_player> <item_id>
+- GIVE <target_id> <item_id>
 - IDLE
+
+Examples:
+SAY: "Let me check this door..."
+ACTION: INTERACT door_01 unlock
+
+SAY: ""
+ACTION: MOVE_TO table_01
+
+SAY: "Here, take this."
+ACTION: GIVE player iron_key
 ```
 
 ### 3.3 Output Parsing
 
 LLM output is parsed into a structured `NpcAction` enum. If parsing fails or action is invalid (conditions not met), NPC defaults to IDLE and optionally comments on the failure ("Locked... who has the key?").
 
-### 3.4 Staggered Ticking
+### 3.4 NPC Tick Model
 
-Not every NPC decides every frame. Decision loop is staggered:
-- Each NPC has a cooldown timer (3-10 seconds depending on situation)
-- NPCs near the player tick more frequently
-- NPCs in other areas tick rarely or are paused
-- Currently executing an action → don't query LLM until done
+Each NPC does one **area scan tick** per decision cycle:
+
+1. **Scan** — collect everything in current context area (entities, states, NPCs, player)
+2. **Build prompt** — persona + memory + scanned context
+3. **Query LLM** — get one decision (SAY + ACTION)
+4. **Execute** — pathfind, interact, speak
+5. **Wait** — cooldown until next tick (action duration + thinking pause)
+
+**Only one NPC acts at a time.** NPCs take turns in a round-robin queue. This simplifies everything:
+
+- One LLM query at a time — no concurrency issues
+- World state is consistent during each decision (no race conditions)
+- Player always sees one NPC doing something, then another — feels natural
+- Tick interval: depends on NPC state (idle: 5-10s, in conversation: 2-3s, walking: tick on arrival)
+- NPCs in areas without the player may be skipped or tick rarely
 
 ---
 
@@ -291,7 +313,20 @@ Not every NPC decides every frame. Decision loop is staggered:
 
 ---
 
-## 5. Pathfinding
+## 5. Player Interaction UI
+
+When player is near an entity with available interactions:
+
+1. **Single interaction** — show `[E] Open` directly, press E to execute
+2. **Multiple interactions** — show list, scroll with mouse wheel or 1/2/3 keys, press E to execute
+3. **No available interactions** — show informational text if any (e.g. "Locked")
+4. **NPC talk** — E opens dialogue mode, typed/spoken input to LLM
+
+The interaction list filters in real-time: only interactions whose conditions are met appear. Others are hidden (not greyed out — invisible).
+
+---
+
+## 6. Pathfinding (renumbered)
 
 Simple approach for indoor/village environments:
 - **Nav mesh** or **waypoint graph** per context area
@@ -327,9 +362,11 @@ KayKit animations available: Idle, Walk, Run, Sit (if available), Wave, Interact
 
 ### Long-term (persisted)
 - Saved to `saves/<npc_id>_memory.json`
-- Older memories summarized by LLM periodically: "Last week: helped the player find the key"
-- Important events flagged for permanent retention
-- Loaded into context as condensed summary
+- Each memory has an **importance score** (assigned by LLM when event happens)
+- High importance: permanent ("Player saved my life")
+- Low importance: decays and eventually forgotten ("Player walked past")
+- Medium: summarized over time by LLM ("Last week: several conversations with the player about the abyss")
+- Loaded into context as condensed summary, most important first
 
 ---
 
