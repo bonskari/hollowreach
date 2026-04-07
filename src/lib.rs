@@ -1218,10 +1218,10 @@ pub struct DialogueBox;
 pub struct DialogueNameText;
 
 pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image = asset_server.load("ui/Panel/panel-025.png");
+    let panel_image = asset_server.load("ui/Border/panel-border-025.png");
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(16.0),
+        border: BorderRect::square(22.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
         max_corner_scale: 2.0,
@@ -1245,7 +1245,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ImageNode {
                         image: panel_image.clone(),
                         image_mode: NodeImageMode::Sliced(slicer.clone()),
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                        
                         ..default()
                     },
                     Node {
@@ -1306,7 +1306,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ImageNode {
                         image: panel_image.clone(),
                         image_mode: NodeImageMode::Sliced(slicer.clone()),
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                        
                         ..default()
                     },
                     Node {
@@ -1389,7 +1389,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             ImageNode {
                                 image: panel_image.clone(),
                                 image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                                
                                 ..default()
                             },
                             Node {
@@ -1498,7 +1498,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 ImageNode {
                                     image: panel_image.clone(),
                                     image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                    color: Color::srgba(0.0, 0.0, 0.0, 0.5),
+                                    
                                     ..default()
                                 },
                                 Node {
