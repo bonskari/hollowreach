@@ -3,7 +3,16 @@ pub use bevy::input::mouse::MouseMotion;
 pub use bevy::prelude::*;
 pub use bevy::ui::widget::NodeImageMode;
 pub use bevy::window::CursorGrabMode;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::f32::consts::PI;
+
+pub mod context;
+pub mod debug_overlay;
+pub mod interactions;
+pub mod inventory;
+pub mod npc_ai;
+pub mod text_input;
 
 // --- Components ---
 
@@ -22,6 +31,183 @@ pub struct Interactable {
     pub dialogue: String,
     pub is_npc: bool,
 }
+
+// --- JSON Config Structs ---
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ColliderConfig {
+    #[serde(rename = "type")]
+    pub collider_type: String,
+    pub radius: f32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Condition {
+    #[serde(rename = "type")]
+    pub condition_type: String,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub item: Option<String>,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ReactionEffect {
+    #[serde(rename = "type")]
+    pub effect_type: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub asset: Option<String>,
+    #[serde(default)]
+    pub anim: Option<String>,
+    #[serde(default)]
+    pub new_state: Option<String>,
+    #[serde(default)]
+    pub item: Option<String>,
+    #[serde(default)]
+    pub flag: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub entity: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Interaction {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub conditions: Vec<Condition>,
+    pub reaction: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct UsePositionConfig {
+    pub id: String,
+    pub offset: [f32; 3],
+    pub rotation_y: f32,
+    pub actor_animation: String,
+    #[serde(default)]
+    pub enter_animation: Option<String>,
+    #[serde(default)]
+    pub exit_animation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PersonalityConfig {
+    pub name: String,
+    pub role: String,
+    #[serde(default)]
+    pub traits: Vec<String>,
+    #[serde(default)]
+    pub backstory: String,
+    #[serde(default)]
+    pub speech_style: String,
+    #[serde(default)]
+    pub voice_profile: String,
+    #[serde(default)]
+    pub knowledge: Vec<String>,
+    #[serde(default)]
+    pub goals: Vec<String>,
+    #[serde(default)]
+    pub likes: Vec<String>,
+    #[serde(default)]
+    pub dislikes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct EntityConfig {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub entity_type: String,
+    pub model: String,
+    #[serde(default)]
+    pub position: Option<[f32; 3]>,
+    #[serde(default)]
+    pub rotation_y: Option<f32>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub collider: Option<ColliderConfig>,
+    #[serde(default)]
+    pub interactions: Vec<Interaction>,
+    #[serde(default)]
+    pub use_positions: Vec<UsePositionConfig>,
+    // NPC-specific fields
+    #[serde(default)]
+    pub personality: Option<PersonalityConfig>,
+    #[serde(default)]
+    pub inventory: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AreaBounds {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AreaConfig {
+    pub id: String,
+    pub label: String,
+    pub bounds: AreaBounds,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub adjacent_areas: Vec<String>,
+    #[serde(default)]
+    pub ambient_sound: Option<String>,
+}
+
+// --- New ECS Components ---
+
+/// Unique identifier for a data-driven entity.
+#[derive(Component, Debug, Clone)]
+pub struct EntityId(pub String);
+
+/// Current state of a data-driven entity (e.g. "locked", "open", "idle").
+#[derive(Component, Debug, Clone)]
+pub struct EntityState(pub String);
+
+/// List of interactions loaded from JSON config.
+#[derive(Component, Debug, Clone)]
+pub struct InteractionList(pub Vec<Interaction>);
+
+/// NPC personality data loaded from JSON.
+#[derive(Component, Debug, Clone)]
+pub struct NpcPersonality {
+    pub name: String,
+    pub role: String,
+    pub traits: Vec<String>,
+    pub backstory: String,
+    pub speech_style: String,
+    pub voice_profile: String,
+    pub knowledge: Vec<String>,
+    pub goals: Vec<String>,
+    pub likes: Vec<String>,
+    pub dislikes: Vec<String>,
+}
+
+/// NPC inventory (list of item IDs).
+#[derive(Component, Debug, Clone)]
+pub struct NpcInventory(pub Vec<String>);
+
+// --- Config Resources ---
+
+/// All loaded entity configs, keyed by ID.
+#[derive(Resource, Default)]
+pub struct EntityConfigs(pub HashMap<String, EntityConfig>);
+
+/// All loaded area configs, keyed by ID.
+#[derive(Resource, Default)]
+pub struct AreaConfigs(pub HashMap<String, AreaConfig>);
 
 #[derive(Resource)]
 pub struct MouseSensitivity(pub f32);
@@ -267,7 +453,17 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<IntroSequence>()
             .init_resource::<AmbientAudio>()
             .init_resource::<IntroSfxState>()
-            .add_systems(Startup, (setup_scene, grab_cursor, setup_ui, setup_intro, load_footstep_audio))
+            .init_resource::<EntityConfigs>()
+            .init_resource::<AreaConfigs>()
+            .add_systems(Startup, (
+                load_entity_configs,
+                setup_scene,
+                grab_cursor,
+                setup_ui,
+                setup_intro,
+                load_footstep_audio,
+            ).chain())
+            .add_systems(Startup, spawn_from_configs.after(load_entity_configs).after(setup_scene))
             .add_systems(
                 Update,
                 (
@@ -286,7 +482,11 @@ impl Plugin for HollowreachPlugin {
                     intro_sfx_system,
                     footstep_sound_system,
                 ),
-            );
+            )
+            .add_plugins(debug_overlay::DebugOverlayPlugin)
+            .add_plugins(inventory::InventoryPlugin)
+            .add_plugins(npc_ai::NpcAiPlugin)
+            .add_plugins(text_input::TextInputPlugin);
     }
 }
 
@@ -362,6 +562,210 @@ pub fn start_npc_animations(
     }
 }
 
+// --- Config Loading ---
+
+/// Reads all JSON files from assets/data/entities/, assets/data/npcs/, and assets/data/areas/
+/// and stores them in EntityConfigs and AreaConfigs resources.
+pub fn load_entity_configs(
+    mut entity_configs: ResMut<EntityConfigs>,
+    mut area_configs: ResMut<AreaConfigs>,
+) {
+    let data_dirs = [
+        ("assets/data/entities", false),
+        ("assets/data/npcs", false),
+        ("assets/data/areas", true),
+    ];
+
+    for (dir_path, is_area) in &data_dirs {
+        let dir = match std::fs::read_dir(dir_path) {
+            Ok(d) => d,
+            Err(e) => {
+                warn!("Could not read directory {}: {}", dir_path, e);
+                continue;
+            }
+        };
+
+        for entry in dir {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+
+            let contents = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Could not read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+
+            if *is_area {
+                match serde_json::from_str::<AreaConfig>(&contents) {
+                    Ok(config) => {
+                        info!("Loaded area config: {}", config.id);
+                        area_configs.0.insert(config.id.clone(), config);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse area config {}: {}", path.display(), e);
+                    }
+                }
+            } else {
+                match serde_json::from_str::<EntityConfig>(&contents) {
+                    Ok(config) => {
+                        info!("Loaded entity config: {}", config.id);
+                        entity_configs.0.insert(config.id.clone(), config);
+                    }
+                    Err(e) => {
+                        warn!("Failed to parse entity config {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+    }
+
+    info!(
+        "Loaded {} entity configs, {} area configs",
+        entity_configs.0.len(),
+        area_configs.0.len()
+    );
+}
+
+/// Spawns Bevy entities from all loaded EntityConfigs.
+pub fn spawn_from_configs(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    entity_configs: Res<EntityConfigs>,
+    mut anim_sources: ResMut<AnimationSources>,
+) {
+    // Track which character GLBs we've already registered as animation sources
+    let mut registered_anim_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    for config in entity_configs.0.values() {
+        let pos = config.position.unwrap_or([0.0, 0.0, 0.0]);
+        let rot_y = config.rotation_y.unwrap_or(0.0);
+        let rot_y_rad = rot_y.to_radians();
+
+        // Load the GLTF scene
+        let scene_path = format!("{}#Scene0", config.model);
+        let scene_root = SceneRoot(asset_server.load(&scene_path));
+
+        let transform = Transform::from_xyz(pos[0], pos[1], pos[2])
+            .with_rotation(Quat::from_rotation_y(rot_y_rad));
+
+        let mut entity_cmd = commands.spawn((
+            scene_root,
+            transform,
+            EntityId(config.id.clone()),
+            EntityState(config.state.clone().unwrap_or_else(|| "default".to_string())),
+            InteractionList(config.interactions.clone()),
+        ));
+
+        // Add collider if present
+        if let Some(ref collider) = config.collider {
+            entity_cmd.insert(CircleCollider { radius: collider.radius });
+        }
+
+        // Build an Interactable for backward compatibility with the existing interact/proximity systems
+        let is_npc = config.entity_type == "npc";
+        if is_npc {
+            let personality = config.personality.as_ref();
+            let name = personality
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| config.id.clone());
+
+            // Build a default dialogue from the first talk interaction's prompt, or a generic one
+            let dialogue = config
+                .interactions
+                .iter()
+                .find(|i| i.id == "talk")
+                .and_then(|i| {
+                    // reaction can be an array or object
+                    if let Some(arr) = i.reaction.as_array() {
+                        arr.iter()
+                            .find(|r| r.get("type").and_then(|t| t.as_str()) == Some("dialogue_prompt"))
+                            .and_then(|r| r.get("prompt").and_then(|p| p.as_str()))
+                            .map(|s| s.to_string())
+                    } else if let Some(obj) = i.reaction.as_object() {
+                        obj.get("dialogue_prompt")
+                            .and_then(|p| p.as_str())
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| format!("{} has nothing to say.", name));
+
+            entity_cmd.insert(Interactable {
+                name: name.clone(),
+                dialogue,
+                is_npc: true,
+            });
+
+            // Add NPC-specific components
+            if let Some(ref p) = config.personality {
+                entity_cmd.insert(NpcPersonality {
+                    name: p.name.clone(),
+                    role: p.role.clone(),
+                    traits: p.traits.clone(),
+                    backstory: p.backstory.clone(),
+                    speech_style: p.speech_style.clone(),
+                    voice_profile: p.voice_profile.clone(),
+                    knowledge: p.knowledge.clone(),
+                    goals: p.goals.clone(),
+                    likes: p.likes.clone(),
+                    dislikes: p.dislikes.clone(),
+                });
+            }
+
+            entity_cmd.insert(NpcInventory(config.inventory.clone()));
+
+            // Register this character GLB as an animation source if not already done
+            if !registered_anim_sources.contains(&config.model) {
+                registered_anim_sources.insert(config.model.clone());
+                let handle: Handle<Gltf> = asset_server.load(&config.model);
+                anim_sources.handles.push(handle);
+            }
+        } else {
+            // Non-NPC entities: add Interactable if they have interactions with info_text
+            let first_interaction_text = config
+                .interactions
+                .iter()
+                .find(|i| i.id == "examine" || i.id == "open")
+                .and_then(|i| {
+                    if let Some(arr) = i.reaction.as_array() {
+                        arr.iter()
+                            .find(|r| r.get("type").and_then(|t| t.as_str()) == Some("info_text"))
+                            .and_then(|r| r.get("text").and_then(|t| t.as_str()))
+                            .map(|s| s.to_string())
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(text) = first_interaction_text {
+                let label = config
+                    .interactions
+                    .iter()
+                    .find(|i| i.id == "examine")
+                    .map(|i| i.label.clone())
+                    .unwrap_or_else(|| config.id.replace('_', " "));
+
+                entity_cmd.insert(Interactable {
+                    name: label,
+                    dialogue: text,
+                    is_npc: false,
+                });
+            }
+        }
+    }
+
+    info!("Spawned {} entities from configs", entity_configs.0.len());
+}
+
 // --- Setup ---
 
 pub fn setup_scene(
@@ -369,14 +773,10 @@ pub fn setup_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
-    mut anim_sources: ResMut<AnimationSources>,
 ) {
     // Helper to spawn a dungeon piece
     let d = |path: &str, server: &AssetServer| -> SceneRoot {
         SceneRoot(server.load(format!("kaykit_dungeon/{path}#Scene0")))
-    };
-    let ch = |path: &str, server: &AssetServer| -> SceneRoot {
-        SceneRoot(server.load(format!("kaykit_characters/{path}#Scene0")))
     };
 
     // --- Ground ---
@@ -396,6 +796,7 @@ pub fn setup_scene(
             Player,
             Transform::from_xyz(0.0, 1.0, 5.0),
             Visibility::default(),
+            inventory::PlayerInventory::default(),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -404,12 +805,6 @@ pub fn setup_scene(
                 Transform::from_xyz(0.0, 0.6, 0.0),
             ));
         });
-
-    // Load character GLTFs as animation sources (animations merged into character GLBs)
-    for char_file in ["Knight.glb", "Mage.glb", "Rogue_Hooded.glb", "Barbarian.glb", "Ranger.glb"] {
-        let handle: Handle<Gltf> = asset_server.load(format!("kaykit_characters/{char_file}"));
-        anim_sources.handles.push(handle);
-    }
 
     // =========================================================
     // VILLAGE LAYOUT — open courtyard with walls on three sides
@@ -467,134 +862,8 @@ pub fn setup_scene(
         }
     }
 
-    // --- Tavern area (left/west side) ---
-    commands.spawn((d("table_medium.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 0.0), CircleCollider { radius: 1.2 }));
-    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-4.8, 0.0, 0.0)));
-    commands.spawn((
-        d("stool.gltf", &asset_server),
-        Transform::from_xyz(-7.2, 0.0, 0.0).with_rotation(Quat::from_rotation_y(PI)),
-    ));
-    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 1.5)));
-    // Second table
-    commands.spawn((d("table_small.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, -3.0), CircleCollider { radius: 0.7 }));
-    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-5.2, 0.0, -3.0)));
-    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-6.8, 0.0, -3.0)));
-
-    // --- Storage area (right/east side) ---
-    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -4.0), CircleCollider { radius: 0.6 }));
-    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(8.2, 0.0, -5.5), CircleCollider { radius: 0.6 }));
-    commands.spawn((d("barrel_small.gltf", &asset_server), Transform::from_xyz(8.0, 0.0, -3.0), CircleCollider { radius: 0.4 }));
-    commands.spawn((d("box_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -7.0), CircleCollider { radius: 0.6 }));
-    commands.spawn((d("box_small.gltf", &asset_server), Transform::from_xyz(8.2, 0.0, -7.0)));
-    commands.spawn((d("box_small.gltf", &asset_server), Transform::from_xyz(7.0, 1.0, -7.0))); // stacked
-
-    // --- Center feature: decorated pillar ---
-    commands.spawn((d("pillar_decorated.gltf", &asset_server), Transform::from_xyz(0.0, 0.0, -1.0), CircleCollider { radius: 1.0 }));
-
-    // Treasure chest near back wall
-    commands.spawn((
-        d("chest.gltf", &asset_server),
-        Transform::from_xyz(-7.0, 0.0, -8.0),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Old Chest".into(),
-            dialogue: "You open the chest. Inside you find a tattered map of the Hollowreach.".into(),
-            is_npc: false,
-        },
-    ));
-    commands.spawn((d("chest_gold.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -8.5), CircleCollider { radius: 0.5 }));
-
-    // Banners on back wall
-    commands.spawn((d("banner_blue.gltf", &asset_server), Transform::from_xyz(-4.0, 0.0, -9.4)));
-    commands.spawn((d("banner_red.gltf", &asset_server), Transform::from_xyz(0.0, 0.0, -9.4)));
-    commands.spawn((d("banner_green.gltf", &asset_server), Transform::from_xyz(4.0, 0.0, -9.4)));
-
-    // Torches along walls
-    for &(x, z, rot) in &[
-        (-9.4, -6.0, PI / 2.0), (-9.4, 0.0, PI / 2.0), (-9.4, 6.0, PI / 2.0),
-        (9.4, -6.0, -PI / 2.0), (9.4, 0.0, -PI / 2.0), (9.4, 6.0, -PI / 2.0),
-        (-4.0, -9.4, 0.0), (4.0, -9.4, 0.0),
-    ] {
-        commands.spawn((
-            d("torch_mounted.gltf", &asset_server),
-            Transform::from_xyz(x, 0.0, z).with_rotation(Quat::from_rotation_y(rot)),
-        ));
-    }
-
-    // Shelves along left wall
-    commands.spawn((
-        d("shelf_large.gltf", &asset_server),
-        Transform::from_xyz(-9.0, 0.0, -4.0).with_rotation(Quat::from_rotation_y(PI / 2.0)),
-    ));
-
-    // Beds in back-left corner (sleeping area)
-    commands.spawn((d("bed_frame.gltf", &asset_server), Transform::from_xyz(-8.0, 0.0, -8.0)));
-    commands.spawn((
-        d("bed_frame.gltf", &asset_server),
-        Transform::from_xyz(-8.0, 0.0, -6.0).with_rotation(Quat::from_rotation_y(PI)),
-    ));
-
-    // --- NPCs (KayKit Adventurer characters) ---
-
-    // Knight — village guard near entrance (away from pillars)
-    commands.spawn((
-        ch("Knight.glb", &asset_server),
-        Transform::from_xyz(4.0, 0.0, 8.0).with_rotation(Quat::from_rotation_y(PI)),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Sir Roland".into(),
-            dialogue: "\"Welcome to Hollowreach, traveler. Keep your wits about you — these walls hold more secrets than stone.\"".into(),
-            is_npc: true,
-        },
-    ));
-
-    // Mage — near tavern table (offset so not inside stool)
-    commands.spawn((
-        ch("Mage.glb", &asset_server),
-        Transform::from_xyz(-4.0, 0.0, 1.5).with_rotation(Quat::from_rotation_y(PI / 2.0)),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Elara the Wise".into(),
-            dialogue: "\"The ley lines beneath this village... they pulse with an ancient energy. Something stirs below.\"".into(),
-            is_npc: true,
-        },
-    ));
-
-    // Rogue — lurking near storage (offset from barrels)
-    commands.spawn((
-        ch("Rogue_Hooded.glb", &asset_server),
-        Transform::from_xyz(5.5, 0.0, -5.0).with_rotation(Quat::from_rotation_y(-PI / 3.0)),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Whisper".into(),
-            dialogue: "\"Psst... looking for something? I know passages the guards don't. For the right price, of course.\"".into(),
-            is_npc: true,
-        },
-    ));
-
-    // Barbarian — near the center pillar (offset from it)
-    commands.spawn((
-        ch("Barbarian.glb", &asset_server),
-        Transform::from_xyz(2.0, 0.0, 0.5),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Grok".into(),
-            dialogue: "\"Grok not like this place. Too many walls. But the food is good.\"".into(),
-            is_npc: true,
-        },
-    ));
-
-    // Ranger — on lookout near back wall
-    commands.spawn((
-        ch("Ranger.glb", &asset_server),
-        Transform::from_xyz(3.0, 0.0, -8.0).with_rotation(Quat::from_rotation_y(PI)),
-        CircleCollider { radius: 0.5 },
-        Interactable {
-            name: "Sylva".into(),
-            dialogue: "\"The forest beyond these walls grows darker each night. I've tracked something... unnatural.\"".into(),
-            is_npc: true,
-        },
-    ));
+    // --- Props, furniture, NPCs are now spawned from JSON configs ---
+    // See spawn_from_configs system
 
     // --- Gabled roof (harjakatto) ---
     // Ridge runs along X axis (east-west), peaks at center
