@@ -91,11 +91,11 @@ pub struct TextInputLabel;
 /// styled to match the existing dialogue box (Kenney Fantasy UI borders).
 /// Hidden by default; shown when the player selects "Say" on an NPC.
 pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image = asset_server.load("ui/Panel/panel-025.png");
+    let panel_image = asset_server.load("ui/Panel/panel-012.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(18.0),
         center_scale_mode: SliceScaleMode::Stretch,
-        sides_scale_mode: SliceScaleMode::Stretch,
+        sides_scale_mode: SliceScaleMode::Tile { stretch_value: 3.0 },
         max_corner_scale: 2.0,
     };
 

@@ -25,3 +25,8 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[[test]]
+name = "test_9slice"
+path = "tests/test_9slice.rs"
+harness = false
