@@ -1221,7 +1221,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
     let border_image = asset_server.load("ui/Border/panel-border-025.png");
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(8.0),
+        border: BorderRect::square(4.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
         max_corner_scale: 1.0,
