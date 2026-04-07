@@ -49,7 +49,7 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
         border: BorderRect::square(16.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Stretch,
-        max_corner_scale: 1.0,
+        max_corner_scale: 2.0,
     };
 
     commands
