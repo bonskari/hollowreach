@@ -397,11 +397,12 @@ pub struct IntroSfx;
 #[derive(Resource)]
 pub struct IntroSfxState {
     pub played: bool,
+    pub sound: Option<Handle<AudioSource>>,
 }
 
 impl Default for IntroSfxState {
     fn default() -> Self {
-        Self { played: false }
+        Self { played: false, sound: None }
     }
 }
 
@@ -1003,18 +1004,30 @@ pub fn setup_scene(
 
     // --- Lighting ---
     commands.insert_resource(AmbientLight {
-        color: Color::srgb(0.9, 0.9, 1.0),
-        brightness: 400.0,
+        color: Color::srgb(0.7, 0.75, 0.9),
+        brightness: 150.0,
     });
 
     // Sun
     commands.spawn((
         DirectionalLight {
-            illuminance: 10000.0,
+            illuminance: 6000.0,
             shadows_enabled: true,
             ..default()
         },
         Transform::from_rotation(Quat::from_euler(EulerRot::XYZ, -PI / 3.5, PI / 5.0, 0.0)),
+    ));
+
+    // Interior warm light with shadows (hanging from ceiling)
+    commands.spawn((
+        PointLight {
+            color: Color::srgb(1.0, 0.85, 0.6),
+            intensity: 80000.0,
+            range: 20.0,
+            shadows_enabled: true,
+            ..default()
+        },
+        Transform::from_xyz(0.0, 5.5, 0.0),
     ));
 
     // Warm torch lights along walls
@@ -1194,7 +1207,9 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
 }
 
-pub fn setup_intro(mut commands: Commands) {
+pub fn setup_intro(mut commands: Commands, asset_server: Res<AssetServer>, mut sfx_state: ResMut<IntroSfxState>) {
+    // Preload intro sound so it plays instantly
+    sfx_state.sound = Some(asset_server.load("audio/cinematic/intro_impact.wav"));
     // Intro text container (transparent, over gameplay)
     commands
         .spawn((
@@ -1241,7 +1256,7 @@ pub fn setup_intro(mut commands: Commands) {
                     ));
                 });
 
-            // "Hollowreach" — with shadow
+            // "Hollowreach" — instant appear at 1.5s (with impact sound)
             parent
                 .spawn(Node::default())
                 .with_children(|wrapper| {
@@ -1256,7 +1271,7 @@ pub fn setup_intro(mut commands: Commands) {
                             top: Val::Px(3.0),
                             ..default()
                         },
-                        UiFadeIn { elapsed: 0.0, delay: 1.2, duration: 1.0 },
+                        UiFadeIn { elapsed: 0.0, delay: 1.5, duration: 0.01 },
                     ));
                     // Foreground
                     wrapper.spawn((
@@ -1264,7 +1279,7 @@ pub fn setup_intro(mut commands: Commands) {
                         Text::new("Hollowreach"),
                         TextFont { font_size: 56.0, ..default() },
                         TextColor(Color::srgba(0.95, 0.82, 0.4, 0.0)),
-                        UiFadeIn { elapsed: 0.0, delay: 1.2, duration: 1.0 },
+                        UiFadeIn { elapsed: 0.0, delay: 1.5, duration: 0.01 },
                     ));
                 });
         });
@@ -1317,19 +1332,20 @@ pub fn intro_sfx_system(
     intro: Res<IntroSequence>,
     mut sfx_state: ResMut<IntroSfxState>,
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
 ) {
     if !intro.active || sfx_state.played {
         return;
     }
 
-    // Trigger the impact sound when the "Hollowreach" title fades in (1.2s)
-    if intro.elapsed >= 1.2 {
-        commands.spawn((
-            IntroSfx,
-            AudioPlayer::<AudioSource>(asset_server.load("audio/cinematic/intro_sweep.wav")),
-            PlaybackSettings::DESPAWN,
-        ));
+    // Trigger the impact sound exactly when "Hollowreach" appears (1.5s)
+    if intro.elapsed >= 1.5 {
+        if let Some(sound) = sfx_state.sound.take() {
+            commands.spawn((
+                IntroSfx,
+                AudioPlayer::<AudioSource>(sound),
+                PlaybackSettings::DESPAWN,
+            ));
+        }
         sfx_state.played = true;
     }
 }
