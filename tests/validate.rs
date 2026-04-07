@@ -10,6 +10,7 @@ fn validate_system(
     mut commands: Commands,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut mouse_events: EventWriter<bevy::input::mouse::MouseMotion>,
+    mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut exit: EventWriter<AppExit>,
 ) {
     frame.0 += 1;
@@ -82,7 +83,36 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_06_back_wall.png"));
         }
 
+        // Position 7: Stand near Grok (Barbarian) — should show [E] hint
         210 => {
+            let mut tf = player_q.single_mut();
+            tf.translation = Vec3::new(3.0, 1.0, 0.5); // near Grok at (2.0, 0, 0.5)
+            mouse_events.send(bevy::input::mouse::MouseMotion { delta: Vec2::new(-400.0, -100.0) });
+        }
+        220 => {
+            commands.spawn(Screenshot::primary_window())
+                .observe(save_to_disk("test_screenshots/v_07_proximity_hint.png"));
+        }
+
+        // Position 8: Press E to trigger dialogue with Grok
+        225 => {
+            keyboard.press(KeyCode::KeyE);
+        }
+        227 => {
+            keyboard.release(KeyCode::KeyE);
+        }
+        235 => {
+            commands.spawn(Screenshot::primary_window())
+                .observe(save_to_disk("test_screenshots/v_08_dialogue_open.png"));
+        }
+
+        // Wait for dialogue to fade, then screenshot without UI
+        280 => {
+            commands.spawn(Screenshot::primary_window())
+                .observe(save_to_disk("test_screenshots/v_09_after_dialogue.png"));
+        }
+
+        295 => {
             exit.send(AppExit::Success);
         }
         _ => {}

@@ -1,6 +1,7 @@
 pub use bevy::color::palettes::css;
 pub use bevy::input::mouse::MouseMotion;
 pub use bevy::prelude::*;
+pub use bevy::ui::widget::NodeImageMode;
 pub use bevy::window::CursorGrabMode;
 use std::f32::consts::PI;
 
@@ -127,11 +128,72 @@ pub struct DialogueTimer {
 impl Default for DialogueTimer {
     fn default() -> Self {
         Self {
-            timer: Timer::from_seconds(3.0, TimerMode::Once),
+            timer: Timer::from_seconds(4.0, TimerMode::Once),
             active: false,
         }
     }
 }
+
+// --- Reusable UI animation components ---
+
+/// Fade in: opacity goes from 0 to 1 over duration. Optional delay before starting.
+#[derive(Component)]
+pub struct UiFadeIn {
+    pub elapsed: f32,
+    pub delay: f32,
+    pub duration: f32,
+}
+
+/// Fade out: opacity goes from 1 to 0. Optionally despawn when done.
+#[derive(Component)]
+pub struct UiFadeOut {
+    pub elapsed: f32,
+    pub delay: f32,
+    pub duration: f32,
+    pub despawn: bool,
+}
+
+/// Slide-up bounce animation for UI elements.
+#[derive(Component)]
+pub struct UiSlideIn {
+    pub elapsed: f32,
+    pub duration: f32,
+    pub start_offset: f32,
+}
+
+/// Cinematic intro screen — "This is" then "Hollowreach" with fade in/out.
+#[derive(Resource)]
+pub struct IntroSequence {
+    pub elapsed: f32,
+    pub active: bool,
+}
+
+impl Default for IntroSequence {
+    fn default() -> Self {
+        Self { elapsed: 0.0, active: true }
+    }
+}
+
+// Intro timing (seconds):
+// 0.0-0.5: black
+// 0.5-1.5: "This is" fades in
+// 1.2-2.2: "Hollowreach" fades in
+// 2.5-3.5: hold
+// 3.5-4.5: both fade out
+// 4.5-5.0: black fades out to gameplay
+// 5.0: done
+
+/// Marker for the intro overlay (fullscreen black).
+#[derive(Component)]
+pub struct IntroOverlay;
+
+/// Marker for "This is" text.
+#[derive(Component)]
+pub struct IntroTextTop;
+
+/// Marker for "Hollowreach" text.
+#[derive(Component)]
+pub struct IntroTextTitle;
 
 // --- Interaction cooldown ---
 
@@ -168,7 +230,8 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<InteractionCooldown>()
             .init_resource::<DialogueTimer>()
             .init_resource::<AnimationSources>()
-            .add_systems(Startup, (setup_scene, grab_cursor, setup_ui))
+            .init_resource::<IntroSequence>()
+            .add_systems(Startup, (setup_scene, grab_cursor, setup_ui, setup_intro))
             .add_systems(
                 Update,
                 (
@@ -180,6 +243,10 @@ impl Plugin for HollowreachPlugin {
                     dialogue_fade_system,
                     start_npc_animations,
                     hide_unwanted_meshes,
+                    ui_slide_in_system,
+                    ui_fade_in_system,
+                    ui_fade_out_system,
+                    intro_system,
                 ),
             );
     }
@@ -675,7 +742,16 @@ pub struct DialogueBox;
 #[derive(Component)]
 pub struct DialogueNameText;
 
-pub fn setup_ui(mut commands: Commands) {
+pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
+    let border_image = asset_server.load("ui/Border/panel-border-015.png");
+    let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
+    let slicer = TextureSlicer {
+        border: BorderRect::square(8.0),
+        center_scale_mode: SliceScaleMode::Stretch,
+        sides_scale_mode: SliceScaleMode::Stretch,
+        max_corner_scale: 1.0,
+    };
+
     // Root UI container
     commands
         .spawn(Node {
@@ -687,7 +763,7 @@ pub fn setup_ui(mut commands: Commands) {
             ..default()
         })
         .with_children(|parent| {
-            // --- Dialogue box (RPG-style bottom panel) ---
+            // --- Dialogue box with 9-slice fantasy border ---
             parent
                 .spawn((
                     DialogueBox,
@@ -696,89 +772,224 @@ pub fn setup_ui(mut commands: Commands) {
                         bottom: Val::Px(30.0),
                         left: Val::Percent(10.0),
                         right: Val::Percent(10.0),
-                        padding: UiRect::all(Val::Px(20.0)),
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.05, 0.05, 0.1, 0.85)),
-                    BorderRadius::all(Val::Px(8.0)),
-                    BorderColor(Color::srgba(0.6, 0.5, 0.3, 0.8)),
-                    Outline::new(Val::Px(2.0), Val::ZERO, Color::srgba(0.6, 0.5, 0.3, 0.8)),
+                    BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
                     Visibility::Hidden,
                 ))
                 .with_children(|box_parent| {
-                    // NPC name (gold colored, bold-ish)
+                    // 9-slice border overlay
                     box_parent.spawn((
-                        DialogueNameText,
-                        Text::new(""),
-                        TextFont {
-                            font_size: 22.0,
+                        ImageNode {
+                            image: border_image.clone(),
+                            image_mode: NodeImageMode::Sliced(slicer.clone()),
                             ..default()
                         },
-                        TextColor(Color::srgb(0.9, 0.75, 0.3)),
                         Node {
-                            margin: UiRect::bottom(Val::Px(8.0)),
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(-4.0),
+                            left: Val::Px(-4.0),
+                            right: Val::Px(-4.0),
+                            bottom: Val::Px(-4.0),
                             ..default()
                         },
                     ));
 
-                    // Dialogue text (white)
-                    box_parent.spawn((
-                        DialogueText,
-                        Text::new(""),
-                        TextFont {
-                            font_size: 18.0,
+                    // Content area with padding inside border
+                    box_parent
+                        .spawn(Node {
+                            padding: UiRect::axes(Val::Px(24.0), Val::Px(16.0)),
+                            flex_direction: FlexDirection::Column,
                             ..default()
-                        },
-                        TextColor(Color::srgba(0.95, 0.95, 0.95, 1.0)),
-                        TextLayout::new_with_justify(JustifyText::Left),
-                    ));
+                        })
+                        .with_children(|content| {
+                            // NPC name
+                            content.spawn((
+                                DialogueNameText,
+                                Text::new(""),
+                                TextFont { font_size: 22.0, ..default() },
+                                TextColor(Color::srgb(0.95, 0.82, 0.4)),
+                            ));
+
+                            // Divider fade
+                            content.spawn((
+                                ImageNode::new(divider_image.clone()),
+                                Node {
+                                    width: Val::Percent(80.0),
+                                    height: Val::Px(6.0),
+                                    margin: UiRect::axes(Val::Auto, Val::Px(6.0)),
+                                    ..default()
+                                },
+                            ));
+
+                            // Dialogue text
+                            content.spawn((
+                                DialogueText,
+                                Text::new(""),
+                                TextFont { font_size: 17.0, ..default() },
+                                TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                                TextLayout::new_with_justify(JustifyText::Left),
+                            ));
+                        });
                 });
 
-            // --- Proximity hint (bottom center, styled key prompt) ---
+            // --- Proximity hint with border ---
             parent
                 .spawn((
                     ProximityHintText,
                     Node {
                         margin: UiRect::bottom(Val::Px(10.0)),
-                        padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.5)),
-                    BorderRadius::all(Val::Px(6.0)),
                     Visibility::Hidden,
                 ))
                 .with_children(|hint_parent| {
-                    hint_parent.spawn((
-                        Text::new(""),
-                        TextFont {
-                            font_size: 16.0,
+                    // Background + border
+                    hint_parent
+                        .spawn((
+                            Node {
+                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.85)),
+                        ))
+                        .with_children(|bg| {
+                            // 9-slice border
+                            bg.spawn((
+                                ImageNode {
+                                    image: border_image.clone(),
+                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    ..default()
+                                },
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(-3.0),
+                                    left: Val::Px(-3.0),
+                                    right: Val::Px(-3.0),
+                                    bottom: Val::Px(-3.0),
+                                    ..default()
+                                },
+                            ));
+
+                            bg.spawn((
+                                Text::new(""),
+                                TextFont { font_size: 15.0, ..default() },
+                                TextColor(Color::srgba(0.95, 0.92, 0.75, 1.0)),
+                                TextLayout::new_with_justify(JustifyText::Center),
+                            ));
+                        });
+                });
+
+        });
+}
+
+pub fn setup_intro(mut commands: Commands) {
+    // Intro text container (transparent, over gameplay)
+    commands
+        .spawn((
+            IntroOverlay,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                ..default()
+            },
+            GlobalZIndex(100),
+        ))
+        .with_children(|parent| {
+            // "This is" — with shadow (dark text behind, offset 2px)
+            parent
+                .spawn(Node {
+                    margin: UiRect::bottom(Val::Px(8.0)),
+                    ..default()
+                })
+                .with_children(|wrapper| {
+                    // Shadow
+                    wrapper.spawn((
+                        Text::new("This is"),
+                        TextFont { font_size: 28.0, ..default() },
+                        TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(2.0),
+                            top: Val::Px(2.0),
                             ..default()
                         },
-                        TextColor(Color::srgba(1.0, 1.0, 0.8, 1.0)),
-                        TextLayout::new_with_justify(JustifyText::Center),
+                        UiFadeIn { elapsed: 0.0, delay: 0.5, duration: 1.0 },
+                    ));
+                    // Foreground
+                    wrapper.spawn((
+                        IntroTextTop,
+                        Text::new("This is"),
+                        TextFont { font_size: 28.0, ..default() },
+                        TextColor(Color::srgba(0.9, 0.9, 0.9, 0.0)),
+                        UiFadeIn { elapsed: 0.0, delay: 0.5, duration: 1.0 },
                     ));
                 });
 
-            // --- Crosshair (small dot in center) ---
-            parent.spawn((
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Percent(50.0),
-                    left: Val::Percent(50.0),
-                    width: Val::Px(4.0),
-                    height: Val::Px(4.0),
-                    margin: UiRect {
-                        left: Val::Px(-2.0),
-                        top: Val::Px(-2.0),
-                        ..default()
-                    },
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.5)),
-                BorderRadius::all(Val::Px(2.0)),
-            ));
+            // "Hollowreach" — with shadow
+            parent
+                .spawn(Node::default())
+                .with_children(|wrapper| {
+                    // Shadow
+                    wrapper.spawn((
+                        Text::new("Hollowreach"),
+                        TextFont { font_size: 56.0, ..default() },
+                        TextColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(3.0),
+                            top: Val::Px(3.0),
+                            ..default()
+                        },
+                        UiFadeIn { elapsed: 0.0, delay: 1.2, duration: 1.0 },
+                    ));
+                    // Foreground
+                    wrapper.spawn((
+                        IntroTextTitle,
+                        Text::new("Hollowreach"),
+                        TextFont { font_size: 56.0, ..default() },
+                        TextColor(Color::srgba(0.95, 0.82, 0.4, 0.0)),
+                        UiFadeIn { elapsed: 0.0, delay: 1.2, duration: 1.0 },
+                    ));
+                });
         });
+}
+
+pub fn intro_system(
+    time: Res<Time>,
+    mut intro: ResMut<IntroSequence>,
+    mut commands: Commands,
+    overlay_q: Query<Entity, With<IntroOverlay>>,
+    text_q: Query<Entity, Or<(With<IntroTextTop>, With<IntroTextTitle>)>>,
+    // Also fade shadows — all Text children of the overlay that have UiFadeIn
+    fadeable_q: Query<Entity, With<UiFadeIn>>,
+) {
+    if !intro.active {
+        return;
+    }
+    intro.elapsed += time.delta_secs();
+
+    // At 3.5s: fade out ALL text (including shadows) by switching UiFadeIn → UiFadeOut
+    if intro.elapsed > 3.5 && intro.elapsed - time.delta_secs() <= 3.5 {
+        for entity in &fadeable_q {
+            commands.entity(entity).remove::<UiFadeIn>().insert(
+                UiFadeOut { elapsed: 0.0, delay: 0.0, duration: 1.0, despawn: false },
+            );
+        }
+    }
+
+    // At 4.8s: despawn entire overlay (removes all children)
+    if intro.elapsed > 4.8 && intro.elapsed - time.delta_secs() <= 4.8 {
+        if let Ok(overlay) = overlay_q.get_single() {
+            commands.entity(overlay).despawn_recursive();
+        }
+        intro.active = false;
+    }
 }
 
 pub fn grab_cursor(mut windows: Query<&mut Window>) {
@@ -908,8 +1119,9 @@ pub fn interact_system(
     interactables: Query<(&Transform, &Interactable), Without<Player>>,
     mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
     mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
-    mut dialogue_box_q: Query<&mut Visibility, With<DialogueBox>>,
+    mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
     mut dialogue_timer: ResMut<DialogueTimer>,
+    mut commands: Commands,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -941,9 +1153,14 @@ pub fn interact_system(
         let mut text = dialogue_text_q.single_mut();
         **text = interactable.dialogue.clone();
 
-        // Show dialogue box
-        let mut box_vis = dialogue_box_q.single_mut();
+        // Show dialogue box with slide-in animation
+        let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
         *box_vis = Visibility::Visible;
+        commands.entity(box_entity).insert(UiSlideIn {
+            elapsed: 0.0,
+            duration: 0.35,
+            start_offset: 80.0,
+        });
 
         dialogue_timer.timer.reset();
         dialogue_timer.active = true;
@@ -955,8 +1172,16 @@ pub fn proximity_hint_system(
     player_q: Query<&Transform, With<Player>>,
     interactables: Query<(&Transform, &Interactable), Without<Player>>,
     mut hint_q: Query<(&mut Visibility, &Children), With<ProximityHintText>>,
+    children_q: Query<&Children>,
     mut text_q: Query<&mut Text>,
+    dialogue_timer: Res<DialogueTimer>,
 ) {
+    // Hide hint while dialogue is showing
+    if dialogue_timer.active {
+        let (mut visibility, _) = hint_q.single_mut();
+        *visibility = Visibility::Hidden;
+        return;
+    }
     let player_tf = player_q.single();
 
     let mut nearest: Option<(&Interactable, f32)> = None;
@@ -971,14 +1196,106 @@ pub fn proximity_hint_system(
 
     let (mut visibility, children) = hint_q.single_mut();
     if let Some((interactable, _)) = nearest {
+        // Find the Text entity (may be nested: ProximityHintText → bg_node → text)
+        fn find_text(entity: Entity, children_q: &Query<&Children>, text_q: &mut Query<&mut Text>) -> Option<Entity> {
+            if text_q.get(entity).is_ok() { return Some(entity); }
+            if let Ok(kids) = children_q.get(entity) {
+                for &kid in kids.iter() {
+                    if let Some(found) = find_text(kid, children_q, text_q) { return Some(found); }
+                }
+            }
+            None
+        }
         if let Some(&child) = children.first() {
-            if let Ok(mut text) = text_q.get_mut(child) {
-                **text = format!("[E]  {}", interactable.name);
+            if let Some(text_entity) = find_text(child, &children_q, &mut text_q) {
+                if let Ok(mut text) = text_q.get_mut(text_entity) {
+                    **text = format!("[E]  {}", interactable.name);
+                }
             }
         }
         *visibility = Visibility::Visible;
     } else {
         *visibility = Visibility::Hidden;
+    }
+}
+
+/// Drives UiFadeIn components — sets opacity on BackgroundColor or TextColor.
+pub fn ui_fade_in_system(
+    time: Res<Time>,
+    mut bg_query: Query<(&mut UiFadeIn, &mut BackgroundColor), Without<Text>>,
+    mut text_query: Query<(&mut UiFadeIn, &mut TextColor), With<Text>>,
+) {
+    for (mut fade, mut bg) in &mut bg_query {
+        fade.elapsed += time.delta_secs();
+        let t = ((fade.elapsed - fade.delay) / fade.duration).clamp(0.0, 1.0);
+        let alpha = t * t * (3.0 - 2.0 * t); // smoothstep
+        bg.0 = bg.0.with_alpha(alpha);
+    }
+    for (mut fade, mut tc) in &mut text_query {
+        fade.elapsed += time.delta_secs();
+        let t = ((fade.elapsed - fade.delay) / fade.duration).clamp(0.0, 1.0);
+        let alpha = t * t * (3.0 - 2.0 * t);
+        tc.0 = tc.0.with_alpha(alpha);
+    }
+}
+
+/// Drives UiFadeOut components.
+pub fn ui_fade_out_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut bg_query: Query<(Entity, &mut UiFadeOut, &mut BackgroundColor), Without<Text>>,
+    mut text_query: Query<(Entity, &mut UiFadeOut, &mut TextColor), With<Text>>,
+) {
+    for (entity, mut fade, mut bg) in &mut bg_query {
+        fade.elapsed += time.delta_secs();
+        let t = ((fade.elapsed - fade.delay) / fade.duration).clamp(0.0, 1.0);
+        let alpha = 1.0 - t * t * (3.0 - 2.0 * t);
+        bg.0 = bg.0.with_alpha(alpha);
+        if t >= 1.0 {
+            commands.entity(entity).remove::<UiFadeOut>();
+            if fade.despawn {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+    }
+    for (entity, mut fade, mut tc) in &mut text_query {
+        fade.elapsed += time.delta_secs();
+        let t = ((fade.elapsed - fade.delay) / fade.duration).clamp(0.0, 1.0);
+        let alpha = 1.0 - t * t * (3.0 - 2.0 * t);
+        tc.0 = tc.0.with_alpha(alpha);
+        if t >= 1.0 {
+            commands.entity(entity).remove::<UiFadeOut>();
+            if fade.despawn {
+                commands.entity(entity).despawn_recursive();
+            }
+        }
+    }
+}
+
+/// Animates UI elements sliding up with a bounce easing.
+pub fn ui_slide_in_system(
+    time: Res<Time>,
+    mut query: Query<(&mut UiSlideIn, &mut Node)>,
+) {
+    for (mut slide, mut node) in &mut query {
+        slide.elapsed += time.delta_secs();
+        let t = (slide.elapsed / slide.duration).clamp(0.0, 1.0);
+        // Bounce-out easing
+        let bounce = if t < 0.6 {
+            // Ease out
+            let t2 = t / 0.6;
+            1.0 - (1.0 - t2) * (1.0 - t2)
+        } else if t < 0.8 {
+            // Small overshoot
+            let t2 = (t - 0.6) / 0.2;
+            1.0 + 0.08 * (1.0 - (t2 * 2.0 - 1.0).powi(2))
+        } else {
+            // Settle back
+            let t2 = (t - 0.8) / 0.2;
+            1.0 + 0.08 * (1.0 - t2) * (1.0 - t2) * (1.0 - t2)
+        };
+        let offset = slide.start_offset * (1.0 - bounce);
+        node.bottom = Val::Px(30.0 - offset);
     }
 }
 
