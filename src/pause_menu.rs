@@ -49,7 +49,6 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
     let button_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
         s.sampler = bevy::image::ImageSampler::nearest();
     });
-    let button_image: Handle<Image> = asset_server.load("ui/Panel/panel-003.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(18.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -124,6 +123,11 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                             .spawn((
                                 PauseButton { action },
                                 Button,
+                                ImageNode {
+                                    image: button_image.clone(),
+                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    ..default()
+                                },
                                 Node {
                                     width: Val::Px(200.0),
                                     height: Val::Px(40.0),
@@ -131,8 +135,6 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                
-                                BorderRadius::all(Val::Px(4.0)),
                             ))
                             .with_children(|btn| {
                                 btn.spawn((

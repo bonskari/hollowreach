@@ -1339,7 +1339,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             content.spawn((
                                 Text::new("[E] Interact  |  1-9 Select"),
                                 TextFont { font_size: 13.0, ..default() },
-                                TextColor(Color::srgba(0.6, 0.58, 0.5, 0.7)),
+                                TextColor(Color::srgba(0.7, 0.7, 0.7, 0.8)),
                             ));
 
                             // Spacer
@@ -1472,7 +1472,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             panel.spawn((
                                 Text::new("[Esc] Close"),
                                 TextFont { font_size: 13.0, ..default() },
-                                TextColor(Color::srgba(0.5, 0.48, 0.42, 0.6)),
+                                TextColor(Color::srgba(0.7, 0.7, 0.7, 0.8)),
                                 Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
                             ));
                         });
