@@ -145,11 +145,18 @@ impl Default for InteractionCooldown {
     }
 }
 
+// --- Collision ---
+
+/// Circle collider on the XZ plane. Attach to any entity that the player shouldn't walk through.
+#[derive(Component)]
+pub struct CircleCollider {
+    pub radius: f32,
+}
+
 // --- Constants ---
 
 pub const INTERACT_DISTANCE: f32 = 3.5;
 pub const PLAYER_RADIUS: f32 = 0.4;
-pub const NPC_RADIUS: f32 = 0.5;
 
 // --- Plugin ---
 
@@ -356,40 +363,41 @@ pub fn setup_scene(
     }
 
     // --- Tavern area (left/west side) ---
-    commands.spawn((d("table_medium.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 0.0)));
+    commands.spawn((d("table_medium.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 0.0), CircleCollider { radius: 1.2 }));
     commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-4.8, 0.0, 0.0)));
     commands.spawn((
         d("stool.gltf", &asset_server),
         Transform::from_xyz(-7.2, 0.0, 0.0).with_rotation(Quat::from_rotation_y(PI)),
     ));
-    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 1.2)));
+    commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, 1.5)));
     // Second table
-    commands.spawn((d("table_small.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, -3.0)));
+    commands.spawn((d("table_small.gltf", &asset_server), Transform::from_xyz(-6.0, 0.0, -3.0), CircleCollider { radius: 0.7 }));
     commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-5.2, 0.0, -3.0)));
     commands.spawn((d("stool.gltf", &asset_server), Transform::from_xyz(-6.8, 0.0, -3.0)));
 
     // --- Storage area (right/east side) ---
-    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -4.0)));
-    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(8.0, 0.0, -5.5)));
-    commands.spawn((d("barrel_small.gltf", &asset_server), Transform::from_xyz(7.8, 0.0, -3.0)));
-    commands.spawn((d("box_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -7.0)));
+    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -4.0), CircleCollider { radius: 0.6 }));
+    commands.spawn((d("barrel_large.gltf", &asset_server), Transform::from_xyz(8.2, 0.0, -5.5), CircleCollider { radius: 0.6 }));
+    commands.spawn((d("barrel_small.gltf", &asset_server), Transform::from_xyz(8.0, 0.0, -3.0), CircleCollider { radius: 0.4 }));
+    commands.spawn((d("box_large.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -7.0), CircleCollider { radius: 0.6 }));
     commands.spawn((d("box_small.gltf", &asset_server), Transform::from_xyz(8.2, 0.0, -7.0)));
     commands.spawn((d("box_small.gltf", &asset_server), Transform::from_xyz(7.0, 1.0, -7.0))); // stacked
 
-    // --- Center feature: well/pillar area ---
-    commands.spawn((d("pillar_decorated.gltf", &asset_server), Transform::from_xyz(0.0, 0.0, -1.0)));
+    // --- Center feature: decorated pillar ---
+    commands.spawn((d("pillar_decorated.gltf", &asset_server), Transform::from_xyz(0.0, 0.0, -1.0), CircleCollider { radius: 1.0 }));
 
     // Treasure chest near back wall
     commands.spawn((
         d("chest.gltf", &asset_server),
         Transform::from_xyz(-7.0, 0.0, -8.0),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Old Chest".into(),
             dialogue: "You open the chest. Inside you find a tattered map of the Hollowreach.".into(),
             is_npc: false,
         },
     ));
-    commands.spawn((d("chest_gold.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -8.5)));
+    commands.spawn((d("chest_gold.gltf", &asset_server), Transform::from_xyz(7.0, 0.0, -8.5), CircleCollider { radius: 0.5 }));
 
     // Banners on back wall
     commands.spawn((d("banner_blue.gltf", &asset_server), Transform::from_xyz(-4.0, 0.0, -9.4)));
@@ -423,10 +431,11 @@ pub fn setup_scene(
 
     // --- NPCs (KayKit Adventurer characters) ---
 
-    // Knight — village guard near entrance
+    // Knight — village guard near entrance (away from pillars)
     commands.spawn((
         ch("Knight.glb", &asset_server),
-        Transform::from_xyz(3.0, 0.0, 8.0).with_rotation(Quat::from_rotation_y(PI)),
+        Transform::from_xyz(4.0, 0.0, 8.0).with_rotation(Quat::from_rotation_y(PI)),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Sir Roland".into(),
             dialogue: "\"Welcome to Hollowreach, traveler. Keep your wits about you — these walls hold more secrets than stone.\"".into(),
@@ -434,10 +443,11 @@ pub fn setup_scene(
         },
     ));
 
-    // Mage — sitting at the tavern table
+    // Mage — near tavern table (offset so not inside stool)
     commands.spawn((
         ch("Mage.glb", &asset_server),
-        Transform::from_xyz(-5.0, 0.0, 0.0).with_rotation(Quat::from_rotation_y(PI / 2.0)),
+        Transform::from_xyz(-4.0, 0.0, 1.5).with_rotation(Quat::from_rotation_y(PI / 2.0)),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Elara the Wise".into(),
             dialogue: "\"The ley lines beneath this village... they pulse with an ancient energy. Something stirs below.\"".into(),
@@ -445,10 +455,11 @@ pub fn setup_scene(
         },
     ));
 
-    // Rogue — lurking near storage barrels
+    // Rogue — lurking near storage (offset from barrels)
     commands.spawn((
         ch("Rogue_Hooded.glb", &asset_server),
-        Transform::from_xyz(6.5, 0.0, -3.5).with_rotation(Quat::from_rotation_y(-PI / 3.0)),
+        Transform::from_xyz(5.5, 0.0, -5.0).with_rotation(Quat::from_rotation_y(-PI / 3.0)),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Whisper".into(),
             dialogue: "\"Psst... looking for something? I know passages the guards don't. For the right price, of course.\"".into(),
@@ -456,10 +467,11 @@ pub fn setup_scene(
         },
     ));
 
-    // Barbarian — near the center pillar
+    // Barbarian — near the center pillar (offset from it)
     commands.spawn((
         ch("Barbarian.glb", &asset_server),
-        Transform::from_xyz(1.5, 0.0, -1.0),
+        Transform::from_xyz(2.0, 0.0, 0.5),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Grok".into(),
             dialogue: "\"Grok not like this place. Too many walls. But the food is good.\"".into(),
@@ -471,12 +483,143 @@ pub fn setup_scene(
     commands.spawn((
         ch("Ranger.glb", &asset_server),
         Transform::from_xyz(3.0, 0.0, -8.0).with_rotation(Quat::from_rotation_y(PI)),
+        CircleCollider { radius: 0.5 },
         Interactable {
             name: "Sylva".into(),
             dialogue: "\"The forest beyond these walls grows darker each night. I've tracked something... unnatural.\"".into(),
             is_npc: true,
         },
     ));
+
+    // --- Gabled roof (harjakatto) ---
+    // Ridge runs along X axis (east-west), peaks at center
+    // Building is 20 wide (X: -10..10) x 20 deep (Z: -10..10)
+    // Walls are 4 units tall, ridge at ~7 units
+    let roof_y_base = 4.0; // top of walls
+    let roof_y_peak = 7.0; // ridge height
+    let roof_half_w = 10.5; // slight overhang past walls
+    let roof_len = 21.0; // slight overhang on ends
+    let roof_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.45, 0.25, 0.15), // dark wood/thatch color
+        perceptual_roughness: 0.95,
+        cull_mode: None, // visible from both sides
+        ..default()
+    });
+
+    // Build two sloped planes for the roof (procedural mesh)
+    // South slope: from back wall ridge down to south wall top
+    // North slope: from back wall ridge down to north wall top
+    for side in [-1.0_f32, 1.0] {
+        let mut positions = Vec::new();
+        let mut normals = Vec::new();
+        let mut uvs = Vec::new();
+        let mut indices = Vec::new();
+
+        // Quad: 4 vertices
+        // Bottom edge (at wall top)
+        let z_bottom = side * roof_half_w;
+        let z_top = 0.0; // ridge at center
+        positions.push([-roof_len / 2.0, roof_y_base, z_bottom]); // bottom-left
+        positions.push([roof_len / 2.0, roof_y_base, z_bottom]);  // bottom-right
+        positions.push([roof_len / 2.0, roof_y_peak, z_top]);     // top-right (ridge)
+        positions.push([-roof_len / 2.0, roof_y_peak, z_top]);    // top-left (ridge)
+
+        // Normal: perpendicular to the slope
+        let edge_horizontal = Vec3::new(1.0, 0.0, 0.0);
+        let edge_slope = Vec3::new(0.0, roof_y_peak - roof_y_base, z_top - z_bottom).normalize();
+        let normal = edge_slope.cross(edge_horizontal).normalize();
+        for _ in 0..4 {
+            normals.push([normal.x, normal.y, normal.z]);
+        }
+
+        uvs.push([0.0, 0.0]);
+        uvs.push([5.0, 0.0]);
+        uvs.push([5.0, 2.0]);
+        uvs.push([0.0, 2.0]);
+
+        if side > 0.0 {
+            indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+        } else {
+            indices.extend_from_slice(&[0, 2, 1, 0, 3, 2]);
+        }
+
+        let mut mesh = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(roof_mat.clone()),
+        ));
+    }
+
+    // Triangular gable ends (east and west walls) — fill the gap between wall top and roof peak
+    // Ridge runs along Z axis, gables are on X ends
+    // Wait — actually ridge runs along X. Gables are at Z=±roof_half_w
+    // The roof slopes from Z=±roof_half_w (at wall height) up to Z=0 (ridge at peak)
+    // So gable ends are at X=±roof_len/2 — east and west ends
+    let gable_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.5, 0.35, 0.2),
+        perceptual_roughness: 0.9,
+        cull_mode: None,
+        ..default()
+    });
+    for &x in &[-roof_len / 2.0, roof_len / 2.0] {
+        // Triangle: bottom-left at south wall, bottom-right at north wall, peak at ridge
+        let positions = vec![
+            [x, roof_y_base, -roof_half_w], // bottom south
+            [x, roof_y_base, roof_half_w],  // bottom north
+            [x, roof_y_peak, 0.0],          // peak (ridge)
+        ];
+        let normal = if x > 0.0 { [1.0, 0.0, 0.0] } else { [-1.0, 0.0, 0.0] };
+        let normals = vec![normal; 3];
+        let uvs = vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]];
+        let indices = if x > 0.0 { vec![0u32, 2, 1] } else { vec![0u32, 1, 2] };
+
+        let mut mesh = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+        commands.spawn((
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(gable_mat.clone()),
+        ));
+    }
+
+    // Ridge beam (wooden beam along the peak)
+    commands.spawn((
+        Mesh3d(meshes.add(Cuboid::new(21.0, 0.3, 0.3))),
+        MeshMaterial3d(gable_mat.clone()),
+        Transform::from_xyz(0.0, roof_y_peak, 0.0),
+    ));
+
+    // Support beams (rafters visible from inside)
+    let rafter_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.4, 0.25, 0.12),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    for x in (-8..=8).step_by(4) {
+        for &side in &[-1.0_f32, 1.0] {
+            let z_bottom = side * roof_half_w;
+            let rafter_len = ((roof_y_peak - roof_y_base).powi(2) + roof_half_w.powi(2)).sqrt();
+            let angle = (roof_y_peak - roof_y_base).atan2(roof_half_w) * side;
+            commands.spawn((
+                Mesh3d(meshes.add(Cuboid::new(0.15, 0.15, rafter_len))),
+                MeshMaterial3d(rafter_mat.clone()),
+                Transform::from_xyz(
+                    x as f32,
+                    (roof_y_base + roof_y_peak) / 2.0,
+                    z_bottom / 2.0,
+                )
+                .with_rotation(Quat::from_rotation_x(angle)),
+            ));
+        }
+    }
 
     // --- Sky color ---
     commands.insert_resource(ClearColor(Color::srgb(0.45, 0.55, 0.75)));
@@ -621,29 +764,26 @@ pub fn player_movement(
 }
 
 /// Collision system that runs after player_movement. Prevents the player from walking
-/// through walls, pillars, and NPCs, and clamps position to world boundaries.
+/// through walls, collider entities, and clamps position to world boundaries.
 pub fn player_collision(
     mut player_q: Query<&mut Transform, With<Player>>,
-    npc_q: Query<(&Transform, &Interactable), Without<Player>>,
+    colliders: Query<(&Transform, &CircleCollider), Without<Player>>,
 ) {
     let mut transform = player_q.single_mut();
     let mut pos = transform.translation;
 
-    // 1. Static collision against walls and pillar
+    // 1. Static collision against walls
     let aabbs = static_collision_aabbs();
     for aabb in &aabbs {
         pos = aabb.push_out_circle_xz(pos, PLAYER_RADIUS);
     }
 
-    // 2. NPC collision (treat NPCs as circles on the XZ plane)
-    for (npc_tf, interactable) in &npc_q {
-        if !interactable.is_npc {
-            continue;
-        }
-        let npc_pos = npc_tf.translation;
-        let min_dist = PLAYER_RADIUS + NPC_RADIUS;
-        let dx = pos.x - npc_pos.x;
-        let dz = pos.z - npc_pos.z;
+    // 2. Dynamic circle colliders (NPCs, props, etc.)
+    for (col_tf, collider) in &colliders {
+        let col_pos = col_tf.translation;
+        let min_dist = PLAYER_RADIUS + collider.radius;
+        let dx = pos.x - col_pos.x;
+        let dz = pos.z - col_pos.z;
         let dist_sq = dx * dx + dz * dz;
         if dist_sq < min_dist * min_dist && dist_sq > 0.0 {
             let dist = dist_sq.sqrt();
@@ -655,7 +795,7 @@ pub fn player_collision(
         }
     }
 
-    // 3. World boundary clamping (ground is 50x50, keep player inside with margin)
+    // 3. World boundary clamping
     pos.x = pos.x.clamp(-24.0, 24.0);
     pos.z = pos.z.clamp(-24.0, 24.0);
 
