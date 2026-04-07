@@ -91,7 +91,7 @@ pub struct TextInputLabel;
 /// styled to match the existing dialogue box (Kenney Fantasy UI borders).
 /// Hidden by default; shown when the player selects "Say" on an NPC.
 pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let border_image = asset_server.load("ui/Border/panel-border-015.png");
+    let border_image = asset_server.load("ui/Border/panel-border-025.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(8.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -113,8 +113,8 @@ pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer
             },
             BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
             Visibility::Hidden,
-            // Render on top of dialogue box
-            ZIndex(10),
+            // Render on top of dialogue box (dialogue=20, text input=50, pause=200)
+            GlobalZIndex(50),
         ))
         .with_children(|box_parent| {
             // 9-slice border overlay (matching dialogue box style)

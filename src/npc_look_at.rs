@@ -1,7 +1,9 @@
 //! NPC look-at system — NPCs smoothly turn their HEAD to face interaction targets.
 //!
-//! Only the head bone rotates, not the whole body. Target clears automatically
-//! when the player moves away.
+//! Runs in PostUpdate so the look-at rotation is applied AFTER the animation
+//! system has written the bone's animated pose.  The look-at is an additive
+//! Y-rotation multiplied on top of the animated rotation, so it blends
+//! naturally with idle/walk animations.
 
 use bevy::prelude::*;
 use std::f32::consts::PI;
@@ -36,20 +38,33 @@ pub struct NpcHeadBone {
     pub npc_root: Entity,
 }
 
+/// Stores the current additive yaw offset applied on top of the animated pose.
+/// This lets us smoothly interpolate the offset each frame rather than
+/// recalculating from the bone's (animation-written) rotation.
+#[derive(Component)]
+pub struct HeadLookAtOffset {
+    pub yaw: f32,
+}
+
 pub struct NpcLookAtPlugin;
 
 impl Plugin for NpcLookAtPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (find_head_bones, npc_look_at_system, clear_distant_targets));
+        // find_head_bones and clear_distant_targets run in Update (fine, no ordering issue)
+        app.add_systems(Update, (find_head_bones, clear_distant_targets));
+
+        // The look-at system MUST run in PostUpdate, after Bevy's animation
+        // systems have finished writing bone transforms.
+        app.add_systems(PostUpdate, npc_look_at_system);
     }
 }
 
-/// Finds "Head" named entities that are children of NPC entities with NpcLookAt,
-/// and marks them with NpcHeadBone.
+/// Finds "head" named entities that are children of NPC entities with NpcLookAt,
+/// and marks them with NpcHeadBone + HeadLookAtOffset.
 fn find_head_bones(
     mut commands: Commands,
-    npc_q: Query<Entity, (With<NpcLookAt>, Without<NpcHeadBone>)>,
-    name_q: Query<(Entity, &Name, &Parent), Without<NpcHeadBone>>,
+    npc_q: Query<Entity, With<NpcLookAt>>,
+    name_q: Query<(Entity, &Name), (Without<NpcHeadBone>, Without<NpcLookAt>)>,
     existing_heads: Query<&NpcHeadBone>,
 ) {
     for npc_entity in &npc_q {
@@ -59,13 +74,13 @@ fn find_head_bones(
             continue;
         }
 
-        // Search all named entities for "Head" that's a descendant of this NPC
-        for (bone_entity, name, _parent) in &name_q {
-            if name.as_str() == "Head" {
-                // Check if this bone is a descendant of the NPC (walk up parents)
-                // For simplicity, just tag any "Head" bone found — works when NPCs
-                // are the only entities with NpcLookAt
-                commands.entity(bone_entity).insert(NpcHeadBone { npc_root: npc_entity });
+        // Search all named entities for "head" (lowercase — KayKit skeleton naming)
+        for (bone_entity, name) in &name_q {
+            if name.as_str() == "head" {
+                commands.entity(bone_entity).insert((
+                    NpcHeadBone { npc_root: npc_entity },
+                    HeadLookAtOffset { yaw: 0.0 },
+                ));
             }
         }
     }
@@ -90,66 +105,85 @@ fn clear_distant_targets(
     }
 }
 
-/// Rotate head bones toward their NPC's look-at target.
+/// Additive head rotation applied AFTER animations.
+///
+/// Instead of setting an absolute rotation (which the animation would
+/// overwrite), we:
+///   1. Read the NPC's look-at target and compute the desired yaw offset.
+///   2. Smoothly interpolate `HeadLookAtOffset::yaw` toward that desired offset.
+///   3. Multiply the offset rotation onto whatever rotation the animation
+///      system has already written into the bone's `Transform`.
 fn npc_look_at_system(
     time: Res<Time>,
     npc_q: Query<(&GlobalTransform, &NpcLookAt)>,
-    mut head_q: Query<(&NpcHeadBone, &mut Transform)>,
+    mut head_q: Query<(&NpcHeadBone, &mut Transform, &mut HeadLookAtOffset)>,
     target_q: Query<&GlobalTransform>,
 ) {
-    for (head_bone, mut head_tf) in &mut head_q {
+    for (head_bone, mut head_tf, mut offset) in &mut head_q {
         let Ok((npc_global, look_at)) = npc_q.get(head_bone.npc_root) else {
             continue;
         };
 
         let npc_pos = npc_global.translation();
 
-        match look_at.target {
-            Some(target_entity) => {
-                let Ok(target_global) = target_q.get(target_entity) else { continue };
+        // Compute desired yaw offset
+        let desired_yaw = if let Some(target_entity) = look_at.target {
+            if let Ok(target_global) = target_q.get(target_entity) {
                 let target_pos = target_global.translation();
 
-                // Direction from NPC to target in world space
                 let dx = target_pos.x - npc_pos.x;
                 let dz = target_pos.z - npc_pos.z;
 
                 if dx.abs() < 0.01 && dz.abs() < 0.01 {
-                    continue;
+                    0.0
+                } else {
+                    // Target yaw relative to NPC's forward direction
+                    let world_yaw = dx.atan2(dz);
+                    let npc_yaw = npc_global
+                        .to_scale_rotation_translation()
+                        .1
+                        .to_euler(EulerRot::YXZ)
+                        .0;
+                    let mut relative_yaw = world_yaw - npc_yaw;
+
+                    // Normalize to -PI..PI
+                    while relative_yaw > PI {
+                        relative_yaw -= 2.0 * PI;
+                    }
+                    while relative_yaw < -PI {
+                        relative_yaw += 2.0 * PI;
+                    }
+
+                    // Clamp to max angle
+                    relative_yaw.clamp(-look_at.max_angle, look_at.max_angle)
                 }
-
-                // Target yaw relative to NPC's forward direction
-                let world_yaw = dx.atan2(dz);
-                let npc_yaw = npc_global.to_scale_rotation_translation().1.to_euler(EulerRot::YXZ).0;
-                let mut relative_yaw = world_yaw - npc_yaw;
-
-                // Normalize to -PI..PI
-                while relative_yaw > PI { relative_yaw -= 2.0 * PI; }
-                while relative_yaw < -PI { relative_yaw += 2.0 * PI; }
-
-                // Clamp to max angle
-                relative_yaw = relative_yaw.clamp(-look_at.max_angle, look_at.max_angle);
-
-                // Smooth interpolation toward target rotation
-                let current_yaw = head_tf.rotation.to_euler(EulerRot::YXZ).0;
-                let mut diff = relative_yaw - current_yaw;
-                while diff > PI { diff -= 2.0 * PI; }
-                while diff < -PI { diff += 2.0 * PI; }
-
-                let max_step = look_at.speed * time.delta_secs();
-                let step = diff.clamp(-max_step, max_step);
-                let new_yaw = current_yaw + step;
-
-                head_tf.rotation = Quat::from_rotation_y(new_yaw);
+            } else {
+                // Target entity gone — drift back to neutral
+                0.0
             }
-            None => {
-                // Smoothly return to neutral (identity rotation on Y)
-                let current_yaw = head_tf.rotation.to_euler(EulerRot::YXZ).0;
-                if current_yaw.abs() > 0.01 {
-                    let max_step = look_at.speed * time.delta_secs();
-                    let step = (-current_yaw).clamp(-max_step, max_step);
-                    head_tf.rotation = Quat::from_rotation_y(current_yaw + step);
-                }
-            }
+        } else {
+            0.0
+        };
+
+        // Smooth interpolation of the offset
+        let mut diff = desired_yaw - offset.yaw;
+        while diff > PI {
+            diff -= 2.0 * PI;
+        }
+        while diff < -PI {
+            diff += 2.0 * PI;
+        }
+
+        let max_step = look_at.speed * time.delta_secs();
+        let step = diff.clamp(-max_step, max_step);
+        offset.yaw += step;
+
+        // Apply as additive rotation on top of the animated pose.
+        // The animation system has already written the bone's transform,
+        // so we multiply our offset onto it.
+        if offset.yaw.abs() > 0.001 {
+            let additive = Quat::from_rotation_y(offset.yaw);
+            head_tf.rotation = head_tf.rotation * additive;
         }
     }
 }

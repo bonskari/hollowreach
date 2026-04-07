@@ -43,7 +43,7 @@ impl Plugin for PauseMenuPlugin {
 }
 
 fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let border_image = asset_server.load("ui/Border/panel-border-015.png");
+    let border_image = asset_server.load("ui/Border/panel-border-025.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(8.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -169,6 +169,7 @@ fn pause_button_system(
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
     mut exit: EventWriter<AppExit>,
+    mut audio_settings: ResMut<crate::AudioSettings>,
 ) {
     for (interaction, button, mut bg) in &mut interaction_q {
         match *interaction {
@@ -197,8 +198,14 @@ fn pause_button_system(
                 println!("Save not implemented yet");
             }
             PauseAction::Settings => {
-                // TODO: implement settings
-                println!("Settings not implemented yet");
+                // Toggle master mute (0.0 ↔ 0.8). Full settings UI coming later.
+                if audio_settings.master_volume > 0.0 {
+                    audio_settings.master_volume = 0.0;
+                    info!("Audio: master muted");
+                } else {
+                    audio_settings.master_volume = 0.8;
+                    info!("Audio: master unmuted (0.8)");
+                }
             }
             PauseAction::Quit => {
                 exit.send(AppExit::Success);

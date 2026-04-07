@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
 use hollowreach::*;
+use hollowreach::text_input::TextInputState;
 
 #[derive(Resource)]
 struct Frame(usize);
@@ -12,6 +13,10 @@ fn validate_system(
     mut mouse_events: EventWriter<bevy::input::mouse::MouseMotion>,
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut exit: EventWriter<AppExit>,
+    hint_q: Query<&Visibility, With<ProximityHintText>>,
+    panel_q: Query<&Visibility, (With<InteractionListPanel>, Without<ProximityHintText>)>,
+    dialogue_timer: Res<DialogueTimer>,
+    text_input_state: Res<TextInputState>,
 ) {
     frame.0 += 1;
 
@@ -102,6 +107,27 @@ fn validate_system(
             keyboard.release(KeyCode::KeyE);
         }
         235 => {
+            // BUG FIX VALIDATION: When dialogue + text input are active,
+            // the proximity hint MUST be hidden (no overlap)
+            let hint_vis = hint_q.single();
+            if dialogue_timer.active || text_input_state.active {
+                assert_eq!(
+                    *hint_vis, Visibility::Hidden,
+                    "BUG: Proximity hint visible while dialogue/text input is active!"
+                );
+                println!("[PASS] Hint correctly hidden during dialogue/text input");
+            }
+
+            // The interaction list panel should also be hidden during dialogue
+            let panel_vis = panel_q.single();
+            if dialogue_timer.active || text_input_state.active {
+                assert_eq!(
+                    *panel_vis, Visibility::Hidden,
+                    "BUG: Interaction panel visible while dialogue/text input is active!"
+                );
+                println!("[PASS] Interaction panel correctly hidden during dialogue/text input");
+            }
+
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_08_dialogue_open.png"));
         }
@@ -112,7 +138,20 @@ fn validate_system(
                 .observe(save_to_disk("test_screenshots/v_09_after_dialogue.png"));
         }
 
-        295 => {
+        // Position 9: After dialogue fades, still near Grok — verify hint is back
+        290 => {
+            if !dialogue_timer.active && !text_input_state.active {
+                let hint_vis = hint_q.single();
+                // Hint should be visible again now that dialogue is gone
+                // (unless multi-interaction panel is handling it)
+                println!("[INFO] After dialogue fade: hint={:?}, panel={:?}",
+                    *hint_vis, *panel_q.single());
+            }
+            commands.spawn(Screenshot::primary_window())
+                .observe(save_to_disk("test_screenshots/v_10_after_fade.png"));
+        }
+
+        310 => {
             exit.send(AppExit::Success);
         }
         _ => {}

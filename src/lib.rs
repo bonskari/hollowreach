@@ -299,6 +299,16 @@ pub fn static_collision_aabbs() -> Vec<Aabb> {
 #[derive(Component)]
 pub struct ProximityHintText;
 
+/// Marker for the interaction list panel (vertical menu above hint area).
+#[derive(Component)]
+pub struct InteractionListPanel;
+
+/// Marker for individual interaction entry rows inside the panel.
+#[derive(Component)]
+pub struct InteractionListEntry {
+    pub index: usize,
+}
+
 /// Marker for the dialogue text (center screen).
 #[derive(Component)]
 pub struct DialogueText;
@@ -382,6 +392,46 @@ pub struct IntroTextTitle;
 
 // --- Audio ---
 
+/// Global audio volume settings.
+/// All audio spawns multiply their base volume by the relevant category × master.
+#[derive(Resource, Clone, Debug)]
+pub struct AudioSettings {
+    /// Master volume multiplier (0.0–1.0).
+    pub master_volume: f32,
+    /// Music / ambient volume (0.0–1.0).
+    pub music_volume: f32,
+    /// Sound effects volume (0.0–1.0) — footsteps, impacts, interaction sounds.
+    pub sfx_volume: f32,
+    /// TTS / NPC speech volume (0.0–1.0).
+    pub speech_volume: f32,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            master_volume: 0.8,
+            music_volume: 0.5,
+            sfx_volume: 0.7,
+            speech_volume: 1.0,
+        }
+    }
+}
+
+impl AudioSettings {
+    /// Effective SFX volume (sfx × master).
+    pub fn effective_sfx(&self) -> f32 {
+        self.sfx_volume * self.master_volume
+    }
+    /// Effective music volume (music × master).
+    pub fn effective_music(&self) -> f32 {
+        self.music_volume * self.master_volume
+    }
+    /// Effective speech volume (speech × master).
+    pub fn effective_speech(&self) -> f32 {
+        self.speech_volume * self.master_volume
+    }
+}
+
 /// Resource that tracks the ambient background audio entity.
 #[derive(Resource, Default)]
 pub struct AmbientAudio {
@@ -449,7 +499,8 @@ pub struct HollowreachPlugin;
 
 impl Plugin for HollowreachPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<MouseSensitivity>()
+        app.init_resource::<AudioSettings>()
+            .init_resource::<MouseSensitivity>()
             .init_resource::<InteractionCooldown>()
             .init_resource::<DialogueTimer>()
             .init_resource::<AnimationSources>()
@@ -481,6 +532,10 @@ impl Plugin for HollowreachPlugin {
                         .run_if(text_input::text_input_not_active),
                     interact_system.run_if(pause_menu::game_not_paused),
                     proximity_hint_system.run_if(pause_menu::game_not_paused),
+                    interaction_list_panel_system.run_if(pause_menu::game_not_paused),
+                    interaction_scroll_system
+                        .run_if(pause_menu::game_not_paused)
+                        .run_if(text_input::text_input_not_active),
                     dialogue_fade_system.run_if(pause_menu::game_not_paused),
                     start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
@@ -1116,7 +1171,7 @@ pub struct DialogueBox;
 pub struct DialogueNameText;
 
 pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let border_image = asset_server.load("ui/Border/panel-border-015.png");
+    let border_image = asset_server.load("ui/Border/panel-border-025.png");
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(8.0),
@@ -1150,6 +1205,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                     BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
                     Visibility::Hidden,
+                    ZIndex(10),
                 ))
                 .with_children(|box_parent| {
                     // 9-slice border overlay
@@ -1204,6 +1260,85 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
                                 TextLayout::new_with_justify(JustifyText::Left),
                             ));
+                        });
+                });
+
+            // --- Interaction list panel (multi-option menu) ---
+            parent
+                .spawn((
+                    InteractionListPanel,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        bottom: Val::Px(50.0),
+                        left: Val::Percent(30.0),
+                        right: Val::Percent(30.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(0.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
+                    Visibility::Hidden,
+                    ZIndex(5),
+                ))
+                .with_children(|panel| {
+                    // 9-slice border overlay
+                    panel.spawn((
+                        ImageNode {
+                            image: border_image.clone(),
+                            image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            ..default()
+                        },
+                        Node {
+                            position_type: PositionType::Absolute,
+                            top: Val::Px(-4.0),
+                            left: Val::Px(-4.0),
+                            right: Val::Px(-4.0),
+                            bottom: Val::Px(-4.0),
+                            ..default()
+                        },
+                    ));
+
+                    // Content area
+                    panel
+                        .spawn(Node {
+                            padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                            flex_direction: FlexDirection::Column,
+                            ..default()
+                        })
+                        .with_children(|content| {
+                            // Hint text at top
+                            content.spawn((
+                                Text::new("[E] Interact  |  1-9 Select"),
+                                TextFont { font_size: 13.0, ..default() },
+                                TextColor(Color::srgba(0.6, 0.58, 0.5, 0.7)),
+                            ));
+
+                            // Spacer
+                            content.spawn(Node {
+                                height: Val::Px(6.0),
+                                ..default()
+                            });
+
+                            // Entries will be spawned dynamically — up to 9 rows
+                            for i in 0..9 {
+                                content.spawn((
+                                    InteractionListEntry { index: i },
+                                    Node {
+                                        padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                        margin: UiRect::vertical(Val::Px(1.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::NONE),
+                                    Visibility::Hidden,
+                                ))
+                                .with_children(|row| {
+                                    row.spawn((
+                                        Text::new(""),
+                                        TextFont { font_size: 16.0, ..default() },
+                                        TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                                    ));
+                                });
+                            }
                         });
                 });
 
@@ -1345,6 +1480,7 @@ pub fn intro_system(
     _text_q: Query<Entity, Or<(With<IntroTextTop>, With<IntroTextTitle>)>>,
     // Also fade shadows — all Text children of the overlay that have UiFadeIn
     fadeable_q: Query<Entity, With<UiFadeIn>>,
+    audio_settings: Res<AudioSettings>,
 ) {
     if !intro.active {
         return;
@@ -1367,9 +1503,13 @@ pub fn intro_system(
         }
 
         // Start looping ambient audio (fire crackling in the tavern)
+        let music_vol = audio_settings.effective_music();
         let ambient_entity = commands.spawn((
             AudioPlayer::<AudioSource>(asset_server.load("audio/ambient/village_ambient.wav")),
-            PlaybackSettings::LOOP,
+            PlaybackSettings {
+                volume: bevy::audio::Volume::new(music_vol),
+                ..PlaybackSettings::LOOP
+            },
         )).id();
         ambient_audio.entity = Some(ambient_entity);
 
@@ -1382,6 +1522,7 @@ pub fn intro_sfx_system(
     intro: Res<IntroSequence>,
     mut sfx_state: ResMut<IntroSfxState>,
     mut commands: Commands,
+    audio_settings: Res<AudioSettings>,
 ) {
     if !intro.active || sfx_state.played {
         return;
@@ -1390,10 +1531,14 @@ pub fn intro_sfx_system(
     // Trigger the impact sound exactly when "Hollowreach" appears (1.5s)
     if intro.elapsed >= 1.5 {
         if let Some(sound) = sfx_state.sound.take() {
+            let vol = audio_settings.effective_sfx();
             commands.spawn((
                 IntroSfx,
                 AudioPlayer::<AudioSource>(sound),
-                PlaybackSettings::DESPAWN,
+                PlaybackSettings {
+                    volume: bevy::audio::Volume::new(vol),
+                    ..PlaybackSettings::DESPAWN
+                },
             ));
         }
         sfx_state.played = true;
@@ -1852,11 +1997,11 @@ pub fn proximity_hint_system(
     children_q: Query<&Children>,
     mut text_q: Query<&mut Text>,
     dialogue_timer: Res<DialogueTimer>,
+    text_input_state: Res<text_input::TextInputState>,
     global_flags: Res<interactions::GlobalFlags>,
-    selected: Res<interactions::SelectedInteraction>,
 ) {
-    // Hide hint while dialogue is showing
-    if dialogue_timer.active {
+    // Hide hint while dialogue is showing or text input is active
+    if dialogue_timer.active || text_input_state.active {
         let (mut visibility, _) = hint_q.single_mut();
         *visibility = Visibility::Hidden;
         return;
@@ -1885,7 +2030,8 @@ pub fn proximity_hint_system(
             return;
         };
 
-        // Build the hint text
+        // Build simple hint text — only for single-interaction or legacy entities.
+        // Multi-interaction entities use the InteractionListPanel instead.
         let hint_text = if let Some(interaction_list) = opt_list {
             let runtime = interactions::convert_interaction_list(interaction_list);
             let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
@@ -1920,14 +2066,8 @@ pub fn proximity_hint_system(
             } else if available.len() == 1 {
                 format!("[E]  {}", available[0].label)
             } else {
-                // Show all available interactions with selection indicator
-                let sel_idx = selected.index.min(available.len().saturating_sub(1));
-                let mut lines = Vec::new();
-                for (i, interaction) in available.iter().enumerate() {
-                    let marker = if i == sel_idx { ">" } else { " " };
-                    lines.push(format!("{} [{}] {}", marker, i + 1, interaction.label));
-                }
-                format!("[E] to interact  |  Scroll/1-{} to select\n{}", available.len(), lines.join("\n"))
+                // Multi-interaction: hide hint, the panel system handles display
+                String::new()
             }
         } else if let Some(interactable) = opt_interactable {
             format!("[E]  {}", interactable.name)
@@ -1959,6 +2099,141 @@ pub fn proximity_hint_system(
         }
     } else {
         *visibility = Visibility::Hidden;
+    }
+}
+
+/// Updates the interaction list panel: shows a clean vertical menu when the player
+/// is near an entity with multiple available interactions. Hidden otherwise.
+pub fn interaction_list_panel_system(
+    player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
+    interactable_q: Query<
+        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>),
+        Without<Player>,
+    >,
+    mut panel_q: Query<(&mut Visibility, &Children), With<InteractionListPanel>>,
+    mut entry_q: Query<(&InteractionListEntry, &mut Visibility, &mut BackgroundColor, &Children), Without<InteractionListPanel>>,
+    mut text_q: Query<&mut Text>,
+    mut text_color_q: Query<&mut TextColor>,
+    dialogue_timer: Res<DialogueTimer>,
+    text_input_state: Res<text_input::TextInputState>,
+    global_flags: Res<interactions::GlobalFlags>,
+    selected: Res<interactions::SelectedInteraction>,
+) {
+    let (mut panel_vis, _panel_children) = panel_q.single_mut();
+
+    // Hide panel when dialogue or text input is active
+    if dialogue_timer.active || text_input_state.active {
+        *panel_vis = Visibility::Hidden;
+        // Also hide all entries explicitly
+        for (_, mut vis, _, _) in &mut entry_q {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+
+    let (_player_entity, player_tf, player_inv) = player_q.single();
+
+    // Find nearest entity with InteractionList
+    let mut nearest: Option<(Entity, f32)> = None;
+    for (entity, tf, _, opt_list, _, _) in &interactable_q {
+        if opt_list.is_none() {
+            continue;
+        }
+        let dist = player_tf.translation.distance(tf.translation);
+        if dist < INTERACT_DISTANCE {
+            if nearest.is_none() || dist < nearest.unwrap().1 {
+                nearest = Some((entity, dist));
+            }
+        }
+    }
+
+    let Some((nearest_entity, _)) = nearest else {
+        *panel_vis = Visibility::Hidden;
+        // Hide all entries
+        for (_, mut vis, _, _) in &mut entry_q {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    };
+
+    let Ok((_, _, _opt_interactable, opt_list, opt_state, _)) = interactable_q.get(nearest_entity) else {
+        *panel_vis = Visibility::Hidden;
+        return;
+    };
+
+    let Some(interaction_list) = opt_list else {
+        *panel_vis = Visibility::Hidden;
+        return;
+    };
+
+    let runtime = interactions::convert_interaction_list(interaction_list);
+    let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
+    let actor_inventory: Vec<String> = player_inv
+        .map(|inv| inv.items.clone())
+        .unwrap_or_default();
+    let all_entity_states: HashMap<String, String> = interactable_q
+        .iter()
+        .filter_map(|(_, _, _, _, opt_s, opt_eid)| {
+            match (opt_eid, opt_s) {
+                (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
+                _ => None,
+            }
+        })
+        .collect();
+
+    let available = interactions::get_available_interactions(
+        &runtime,
+        entity_state_str,
+        &actor_inventory,
+        &global_flags.0,
+        Some(&all_entity_states),
+    );
+
+    // Only show panel for multi-interaction (2+)
+    if available.len() < 2 {
+        *panel_vis = Visibility::Hidden;
+        for (_, mut vis, _, _) in &mut entry_q {
+            *vis = Visibility::Hidden;
+        }
+        return;
+    }
+
+    *panel_vis = Visibility::Visible;
+
+    let sel_idx = selected.index.min(available.len().saturating_sub(1));
+
+    // Update each entry row
+    for (entry, mut vis, mut bg, children) in &mut entry_q {
+        let i = entry.index;
+        if i < available.len() {
+            *vis = Visibility::Visible;
+            let is_selected = i == sel_idx;
+
+            // Highlight selected row
+            *bg = if is_selected {
+                BackgroundColor(Color::srgba(0.3, 0.25, 0.15, 0.6))
+            } else {
+                BackgroundColor(Color::NONE)
+            };
+
+            // Update text
+            let label = format!("{}. {}", i + 1, available[i].label);
+            if let Some(&text_child) = children.first() {
+                if let Ok(mut text) = text_q.get_mut(text_child) {
+                    **text = label;
+                }
+                // Update text color
+                if let Ok(mut tc) = text_color_q.get_mut(text_child) {
+                    *tc = if is_selected {
+                        TextColor(Color::srgb(0.95, 0.82, 0.4))
+                    } else {
+                        TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0))
+                    };
+                }
+            }
+        } else {
+            *vis = Visibility::Hidden;
+        }
     }
 }
 
@@ -2096,6 +2371,7 @@ pub fn footstep_sound_system(
     intro: Res<IntroSequence>,
     mut footsteps: ResMut<FootstepAudio>,
     player_q: Query<&Transform, With<Player>>,
+    audio_settings: Res<AudioSettings>,
 ) {
     // Don't play footsteps during the intro
     if intro.active {
@@ -2137,19 +2413,21 @@ pub fn footstep_sound_system(
             footsteps.last_index = idx;
 
             let pitch = 0.93 + ((time.elapsed_secs() * 3571.0) % 1.0) * 0.14;
+            let vol = 0.5 * audio_settings.effective_sfx();
             commands.spawn((
                 AudioPlayer(sounds[idx].clone()),
                 PlaybackSettings {
                     speed: pitch,
-                    volume: bevy::audio::Volume::new(0.5),
+                    volume: bevy::audio::Volume::new(vol),
                     ..PlaybackSettings::DESPAWN
                 },
             ));
         } else if !sounds.is_empty() {
+            let vol = 0.5 * audio_settings.effective_sfx();
             commands.spawn((
                 AudioPlayer(sounds[0].clone()),
                 PlaybackSettings {
-                    volume: bevy::audio::Volume::new(0.5),
+                    volume: bevy::audio::Volume::new(vol),
                     ..PlaybackSettings::DESPAWN
                 },
             ));

@@ -659,6 +659,13 @@ fn main() {
                 })
                 ,
         )
+        // Silence all audio during e2e tests
+        .insert_resource(hollowreach::AudioSettings {
+            master_volume: 0.0,
+            music_volume: 0.0,
+            sfx_volume: 0.0,
+            speech_volume: 0.0,
+        })
         .add_plugins(HollowreachPlugin)
         .insert_resource(TestRunner::new())
         .add_systems(

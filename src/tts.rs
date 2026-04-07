@@ -263,6 +263,7 @@ fn tts_poll_system(
     mut commands: Commands,
     engine: Res<TtsEngine>,
     asset_server: Res<AssetServer>,
+    audio_settings: Res<crate::AudioSettings>,
 ) {
     while let Some(response) = engine.poll() {
         info!("TTS: audio ready at {}", response.audio_path);
@@ -292,9 +293,13 @@ fn tts_poll_system(
 
         // Spawn a one-shot audio player entity
         // TODO: In the future, attach this as spatial audio to the NPC entity
+        let speech_vol = audio_settings.effective_speech();
         commands.spawn((
             AudioPlayer::<AudioSource>(audio_handle),
-            PlaybackSettings::DESPAWN,
+            PlaybackSettings {
+                volume: bevy::audio::Volume::new(speech_vol),
+                ..PlaybackSettings::DESPAWN
+            },
             TtsAudioPlayback,
         ));
 
