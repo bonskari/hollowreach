@@ -41,6 +41,10 @@ The LLM-driven NPCs **are** the game. Every conversation is unique. NPCs remembe
 
 There are no scripted quests. No quest markers. The player discovers what to do by talking to people, exploring, and experimenting with items.
 
+**The player types freely.** No dialogue trees, no multiple choice. A text input field. Write anything — ask, lie, threaten, flatter, negotiate. NPCs respond through LLM based on their personality, knowledge, and memory.
+
+**The ultimate goal: overthrow the king.** The player achieves this entirely through social manipulation — talking to NPCs, building alliances, giving items, spreading information. The world contains potentially thousands of NPCs across a kingdom. Words are the player's only weapon.
+
 ---
 
 ## 4. NPC System

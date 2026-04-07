@@ -292,13 +292,23 @@ Each NPC does one **area scan tick** per decision cycle:
 4. **Execute** — pathfind, interact, speak
 5. **Wait** — cooldown until next tick (action duration + thinking pause)
 
-**Only one NPC acts at a time.** NPCs take turns in a round-robin queue. This simplifies everything:
+**Only one NPC acts at a time.** NPCs take turns in a round-robin queue:
 
 - One LLM query at a time — no concurrency issues
 - World state is consistent during each decision (no race conditions)
 - Player always sees one NPC doing something, then another — feels natural
-- Tick interval: depends on NPC state (idle: 5-10s, in conversation: 2-3s, walking: tick on arrival)
-- NPCs in areas without the player may be skipped or tick rarely
+
+**Context hash for dirty detection:**
+
+Each NPC stores a `last_context_hash`. On its turn:
+
+1. Build context (area entities, states, NPCs, player)
+2. Hash the context
+3. Compare to `last_context_hash`
+4. **Same** → skip, stay in current state. No LLM query.
+5. **Different (dirty)** → full LLM query, update hash
+
+This drastically reduces LLM load. A quiet village with nothing happening = zero queries. Something changes = affected NPCs react on their next turn.
 
 ---
 
@@ -320,9 +330,11 @@ When player is near an entity with available interactions:
 1. **Single interaction** — show `[E] Open` directly, press E to execute
 2. **Multiple interactions** — show list, scroll with mouse wheel or 1/2/3 keys, press E to execute
 3. **No available interactions** — show informational text if any (e.g. "Locked")
-4. **NPC talk** — E opens dialogue mode, typed/spoken input to LLM
+4. **NPC "Say"** — always available for NPCs. Opens a **text input field**. Player types freely. LLM generates NPC response. Chatterbox speaks it.
 
 The interaction list filters in real-time: only interactions whose conditions are met appear. Others are hidden (not greyed out — invisible).
+
+"Say" is the player's primary tool. The entire game — building alliances, spreading rumors, overthrowing the king — is done through free text conversation.
 
 ---
 

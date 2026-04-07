@@ -144,14 +144,55 @@ The character (player or NPC) doesn't know how to sit — the bench tells it. Ad
 
 This is separate from interaction logic (conditions, effects, state). Animation is about the physical "how", interaction is about the logical "what happens".
 
+## Player input: "Say"
+
+The player's primary tool is **free text input**. When near an NPC:
+
+- Interaction list includes **"Say"** — always available for any NPC
+- Selecting "Say" opens a text input field
+- Player types anything — questions, lies, threats, flattery, requests
+- LLM receives the text as player input, NPC responds in character
+- Chatterbox speaks the response aloud
+- No predefined dialogue options. The player's words are their weapon.
+
+This is the core of the game. The entire "overthrow the king" arc is achieved through conversation.
+
+## The big picture
+
+The game world contains potentially **hundreds or thousands of NPCs** across multiple areas. The player's goal: overthrow the king — achieved entirely through talking, persuading, giving items, building alliances.
+
+NPCs talk to each other, form opinions, spread rumors. A conversation with one NPC can ripple through the entire social network. Loyalties shift. Alliances form and break.
+
+Every NPC remembers. Every word matters.
+
+## NPC resource consumption
+
+With potentially 1000+ NPCs, the context hash system is critical:
+
+- Each NPC stores `last_context_hash`
+- On its turn: hash current context → compare → if same, skip
+- Most NPCs most of the time: no change → no LLM query
+- Only NPCs with dirty context get queried
+- Result: maybe 5-10 LLM queries per tick cycle, not 1000
+
+## Items as tools of persuasion
+
+Items are not just objects — they are social currency:
+
+- Give a guard his favorite drink → he likes you more
+- Bring evidence of corruption to a noble → they turn against the king
+- Steal a letter and show it to the right person → alliances shift
+
+Items + speech = the player's entire toolkit for revolution.
+
 ## Open questions
 
-- How does the player choose between multiple available interactions? Radial menu? List?
-- How often does the NPC decision loop tick? Every few seconds? Event-driven?
-- How to prevent LLM from choosing nonsensical actions? Constrain output to valid interaction IDs?
-- How do NPCs pathfind between areas?
-- Can NPCs leave the player's current area (walk away while you're talking)?
-- Memory limits — how much history fits in the LLM context?
+- Text input UI: chat-style log or single-line input?
+- Can the player talk to NPCs who are busy (sitting, walking)?
+- Voice input option? (speech-to-text for player)
+- How do rumors propagate between NPCs technically?
+- Save/load: how to persist 1000 NPC memory states?
+- King NPC: is the king an NPC with the same system, or special?
 
 ---
 
