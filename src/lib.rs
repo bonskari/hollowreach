@@ -326,6 +326,7 @@ pub struct NpcPanelRole;
 pub enum NpcPanelAction {
     Say,
     GiveItem,
+    Nevermind,
 }
 
 /// Component on NPC panel buttons to identify their action.
@@ -345,6 +346,44 @@ pub struct NpcPanelState {
 
 /// Run condition: returns true when the NPC panel is NOT open.
 pub fn npc_panel_not_open(state: Res<NpcPanelState>) -> bool {
+    !state.open
+}
+
+/// Marker for the prop interaction panel (centered on screen, same style as NPC panel).
+#[derive(Component)]
+pub struct PropInteractionPanel;
+
+/// Marker for the prop name text inside the prop interaction panel.
+#[derive(Component)]
+pub struct PropPanelName;
+
+/// Marker for the prop subtitle text inside the prop interaction panel.
+#[derive(Component)]
+pub struct PropPanelSubtitle;
+
+/// Marker for the container that holds dynamically spawned prop panel buttons.
+#[derive(Component)]
+pub struct PropPanelButtonContainer;
+
+/// Component on prop panel buttons to identify which interaction index they trigger.
+#[derive(Component)]
+pub struct PropPanelButton {
+    pub index: usize,
+}
+
+/// Tracks the state of the prop interaction panel.
+#[derive(Resource, Default)]
+pub struct PropPanelState {
+    /// Whether the panel is currently open.
+    pub open: bool,
+    /// The prop entity being interacted with.
+    pub target_prop: Option<Entity>,
+    /// The available interactions for the current prop (cached when panel opens).
+    pub available_interactions: Vec<interactions::Interaction>,
+}
+
+/// Run condition: returns true when the prop panel is NOT open.
+pub fn prop_panel_not_open(state: Res<PropPanelState>) -> bool {
     !state.open
 }
 
@@ -549,6 +588,7 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<EntityConfigs>()
             .init_resource::<AreaConfigs>()
             .init_resource::<NpcPanelState>()
+            .init_resource::<PropPanelState>()
             .add_systems(Startup, (
                 load_entity_configs,
                 setup_scene,
@@ -564,25 +604,32 @@ impl Plugin for HollowreachPlugin {
                     player_movement
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(npc_panel_not_open),
+                        .run_if(npc_panel_not_open)
+                        .run_if(prop_panel_not_open),
                     player_collision
                         .after(player_movement)
                         .run_if(pause_menu::game_not_paused),
                     player_look
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(npc_panel_not_open),
+                        .run_if(npc_panel_not_open)
+                        .run_if(prop_panel_not_open),
                     interact_system
                         .run_if(pause_menu::game_not_paused)
-                        .run_if(npc_panel_not_open),
+                        .run_if(text_input::text_input_not_active)
+                        .run_if(npc_panel_not_open)
+                        .run_if(prop_panel_not_open),
                     proximity_hint_system.run_if(pause_menu::game_not_paused),
                     interaction_list_panel_system.run_if(pause_menu::game_not_paused),
                     interaction_scroll_system
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(npc_panel_not_open),
+                        .run_if(npc_panel_not_open)
+                        .run_if(prop_panel_not_open),
                     npc_panel_button_system.run_if(pause_menu::game_not_paused),
                     npc_panel_close_system.run_if(pause_menu::game_not_paused),
+                    prop_panel_button_system.run_if(pause_menu::game_not_paused),
+                    prop_panel_close_system.run_if(pause_menu::game_not_paused),
                     dialogue_fade_system.run_if(pause_menu::game_not_paused),
                     start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
@@ -591,9 +638,16 @@ impl Plugin for HollowreachPlugin {
                     ui_fade_out_system.run_if(pause_menu::game_not_paused),
                     intro_system.run_if(pause_menu::game_not_paused),
                     intro_sfx_system.run_if(pause_menu::game_not_paused),
-                    footstep_sound_system.run_if(pause_menu::game_not_paused),
-                    handle_say_event.run_if(pause_menu::game_not_paused),
+                    footstep_sound_system
+                        .run_if(pause_menu::game_not_paused)
+                        .run_if(text_input::text_input_not_active)
+                        .run_if(npc_panel_not_open)
+                        .run_if(prop_panel_not_open),
                 ),
+            )
+            .add_systems(
+                Update,
+                handle_say_event.run_if(pause_menu::game_not_paused),
             )
             .add_plugins(debug_overlay::DebugOverlayPlugin)
             .add_plugins(inventory::InventoryPlugin)
@@ -1440,6 +1494,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             for (label, action) in [
                                 ("Say", NpcPanelAction::Say),
                                 ("Give item", NpcPanelAction::GiveItem),
+                                ("Nevermind", NpcPanelAction::Nevermind),
                             ] {
                                 panel
                                     .spawn((
@@ -1468,12 +1523,82 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                     });
                             }
 
-                            // Hint: [Esc] Close
+                            // [Esc] Close hint removed — "Nevermind" button serves this purpose
+                        });
+                });
+
+            // --- Prop Interaction Panel (centered on screen, same style as NPC panel) ---
+            parent
+                .spawn((
+                    PropInteractionPanel,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    Visibility::Hidden,
+                    GlobalZIndex(100),
+                ))
+                .with_children(|overlay| {
+                    // Panel container
+                    overlay
+                        .spawn((
+                            ImageNode {
+                                image: panel_image.clone(),
+                                image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.8),
+                                ..default()
+                            },
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(48.0), Val::Px(32.0)),
+                                min_width: Val::Px(280.0),
+                                max_width: Val::Px(340.0),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|panel| {
+                            // Prop name (gold)
                             panel.spawn((
-                                Text::new("[Esc] Close"),
-                                TextFont { font_size: 13.0, ..default() },
-                                TextColor(Color::srgba(0.7, 0.7, 0.7, 0.8)),
-                                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
+                                PropPanelName,
+                                Text::new("Prop Name"),
+                                TextFont { font_size: 24.0, ..default() },
+                                TextColor(Color::srgb(0.95, 0.82, 0.4)),
+                                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+                            ));
+
+                            // Prop subtitle (grey)
+                            panel.spawn((
+                                PropPanelSubtitle,
+                                Text::new(""),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                                Node { margin: UiRect::bottom(Val::Px(8.0)), ..default() },
+                            ));
+
+                            // Divider
+                            panel.spawn((
+                                ImageNode::new(divider_image.clone()),
+                                Node {
+                                    width: Val::Percent(90.0),
+                                    height: Val::Px(6.0),
+                                    margin: UiRect::vertical(Val::Px(8.0)),
+                                    ..default()
+                                },
+                            ));
+
+                            // Dynamic button container — buttons spawned/despawned at runtime
+                            panel.spawn((
+                                PropPanelButtonContainer,
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
                             ));
                         });
                 });
@@ -1483,7 +1608,12 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .spawn((
                     ProximityHintText,
                     Node {
-                        margin: UiRect::bottom(Val::Px(10.0)),
+                        position_type: PositionType::Absolute,
+                        top: Val::Percent(55.0),
+                        left: Val::Percent(0.0),
+                        right: Val::Percent(0.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
                         ..default()
                     },
                     Visibility::Hidden,
@@ -1797,19 +1927,19 @@ pub fn interact_system(
     >,
     mut look_at_q: Query<&mut npc_look_at::NpcLookAt>,
     mut text_queries: ParamSet<(
-        Query<&mut Text, With<DialogueText>>,
-        Query<&mut Text, With<DialogueNameText>>,
         Query<&mut Text, With<NpcPanelName>>,
         Query<&mut Text, With<NpcPanelRole>>,
+        Query<&mut Text, With<PropPanelName>>,
+        Query<&mut Text, With<PropPanelSubtitle>>,
     )>,
-    mut dialogue_box_q: Query<(Entity, &mut Visibility), (With<DialogueBox>, Without<NpcInteractionPanel>)>,
-    mut dialogue_timer: ResMut<DialogueTimer>,
     mut commands: Commands,
     global_flags: Res<interactions::GlobalFlags>,
-    selected: Res<interactions::SelectedInteraction>,
-    mut interaction_events: EventWriter<interactions::InteractionEvent>,
     mut npc_panel_state: ResMut<NpcPanelState>,
-    mut npc_panel_q: Query<&mut Visibility, (With<NpcInteractionPanel>, Without<DialogueBox>)>,
+    mut npc_panel_q: Query<&mut Visibility, (With<NpcInteractionPanel>, Without<PropInteractionPanel>)>,
+    mut prop_panel_state: ResMut<PropPanelState>,
+    mut prop_panel_q: Query<&mut Visibility, (With<PropInteractionPanel>, Without<NpcInteractionPanel>)>,
+    prop_btn_container_q: Query<Entity, With<PropPanelButtonContainer>>,
+    asset_server: Res<AssetServer>,
     mut windows: Query<&mut Window>,
 ) {
     cooldown.0.tick(time.delta());
@@ -1862,8 +1992,8 @@ pub fn interact_system(
             .map(|p| p.role.clone())
             .unwrap_or_default();
 
-        { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = npc_name; } }
-        { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = npc_role; } }
+        { let mut q = text_queries.p0(); if let Ok(mut t) = q.get_single_mut() { **t = npc_name; } }
+        { let mut q = text_queries.p1(); if let Ok(mut t) = q.get_single_mut() { **t = npc_role; } }
 
         // Show the panel
         if let Ok(mut panel_vis) = npc_panel_q.get_single_mut() {
@@ -1883,6 +2013,7 @@ pub fn interact_system(
     }
 
     // --- Non-NPC path: props and other interactables ---
+    // Open the prop interaction panel (same centered style as NPC panel)
 
     // Try the new InteractionList path first
     if let Some(interaction_list) = opt_interaction_list {
@@ -1913,54 +2044,103 @@ pub fn interact_system(
         );
 
         if !available.is_empty() {
-            let idx = selected.index.min(available.len().saturating_sub(1));
-            let chosen = &available[idx];
-
-            let effects = interactions::execute_reaction(&chosen.reaction);
-            let target_id = opt_entity_id
-                .map(|eid| eid.0.clone())
+            // Set panel title from entity name
+            let prop_name = opt_interactable
+                .map(|i| i.name.clone())
+                .or_else(|| opt_entity_id.map(|eid| eid.0.clone()))
+                .unwrap_or_else(|| "Object".to_string());
+            let prop_subtitle = opt_entity_state
+                .map(|s| s.0.clone())
                 .unwrap_or_default();
 
-            interaction_events.send(interactions::InteractionEvent {
-                target: target_entity,
-                target_id,
-                actor: player_entity,
-                interaction_id: chosen.id.clone(),
-                effects: effects.clone(),
-            });
+            { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = prop_name; } }
+            { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = prop_subtitle; } }
 
-            let display_text = effects.iter().find_map(|e| {
-                match e.effect_type {
-                    interactions::ReactionEffectType::InfoText => e.text.clone(),
-                    interactions::ReactionEffectType::DialoguePrompt => e.prompt.clone(),
-                    _ => None,
-                }
-            });
+            // Spawn dynamic buttons into the prop panel button container
+            if let Ok(container_entity) = prop_btn_container_q.get_single() {
+                // Clear existing buttons
+                commands.entity(container_entity).despawn_descendants();
 
-            let display_name = if let Some(interactable) = opt_interactable {
-                interactable.name.clone()
-            } else {
-                chosen.label.clone()
-            };
+                let button_image: Handle<Image> = asset_server.load("ui/Buttons/Button_Blue_3Slides.png");
+                let slicer = TextureSlicer {
+                    border: BorderRect::square(12.0),
+                    center_scale_mode: SliceScaleMode::Stretch,
+                    sides_scale_mode: SliceScaleMode::Stretch,
+                    max_corner_scale: 1.0,
+                };
 
-            if let Some(text_content) = display_text {
-                if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
-                    look_at.target = Some(player_entity);
-                }
+                // Add a button for each available interaction
+                commands.entity(container_entity).with_children(|parent| {
+                    for (i, interaction) in available.iter().enumerate() {
+                        let label = interaction.label.clone();
+                        parent
+                            .spawn((
+                                PropPanelButton { index: i },
+                                Button,
+                                ImageNode {
+                                    image: button_image.clone(),
+                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    ..default()
+                                },
+                                Node {
+                                    width: Val::Px(220.0),
+                                    height: Val::Px(38.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    margin: UiRect::vertical(Val::Px(4.0)),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|btn| {
+                                btn.spawn((
+                                    Text::new(label),
+                                    TextFont { font_size: 17.0, ..default() },
+                                    TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
+                                ));
+                            });
+                    }
 
-                { let mut q = text_queries.p1(); let mut t = q.single_mut(); **t = display_name; }
-                { let mut q = text_queries.p0(); let mut t = q.single_mut(); **t = text_content; }
-
-                let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
-                *box_vis = Visibility::Visible;
-                commands.entity(box_entity).insert(UiSlideIn {
-                    elapsed: 0.0,
-                    duration: 0.35,
-                    start_offset: 80.0,
+                    // Always add "Nevermind" as last button
+                    parent
+                        .spawn((
+                            PropPanelButton { index: usize::MAX },
+                            Button,
+                            ImageNode {
+                                image: button_image.clone(),
+                                image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                ..default()
+                            },
+                            Node {
+                                width: Val::Px(220.0),
+                                height: Val::Px(38.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                margin: UiRect::vertical(Val::Px(4.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new("Nevermind"),
+                                TextFont { font_size: 17.0, ..default() },
+                                TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
+                            ));
+                        });
                 });
+            }
 
-                dialogue_timer.timer.reset();
-                dialogue_timer.active = true;
+            // Show the prop panel
+            if let Ok(mut panel_vis) = prop_panel_q.get_single_mut() {
+                *panel_vis = Visibility::Visible;
+            }
+            prop_panel_state.open = true;
+            prop_panel_state.target_prop = Some(target_entity);
+            prop_panel_state.available_interactions = available;
+
+            // Show cursor
+            if let Ok(mut window) = windows.get_single_mut() {
+                window.cursor_options.grab_mode = CursorGrabMode::None;
+                window.cursor_options.visible = true;
             }
 
             cooldown.0.reset();
@@ -1968,21 +2148,114 @@ pub fn interact_system(
         }
     }
 
-    // Legacy fallback: use the old Interactable component (non-NPC only)
+    // Legacy fallback: Interactable entities without InteractionList
+    // Show a prop panel with an "Examine" button
     if let Some(interactable) = opt_interactable {
-        { let mut q = text_queries.p1(); let mut t = q.single_mut(); **t = interactable.name.clone(); }
-        { let mut q = text_queries.p0(); let mut t = q.single_mut(); **t = interactable.dialogue.clone(); }
+        let prop_name = interactable.name.clone();
+        { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = prop_name; } }
+        { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = String::new(); } }
 
-        let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
-        *box_vis = Visibility::Visible;
-        commands.entity(box_entity).insert(UiSlideIn {
-            elapsed: 0.0,
-            duration: 0.35,
-            start_offset: 80.0,
-        });
+        // Create a synthetic interaction for the legacy dialogue
+        let legacy_interaction = interactions::Interaction {
+            id: "examine".to_string(),
+            label: "Examine".to_string(),
+            conditions: vec![],
+            reaction: vec![interactions::ReactionEffect {
+                effect_type: interactions::ReactionEffectType::InfoText,
+                text: Some(interactable.dialogue.clone()),
+                anim: None,
+                asset: None,
+                new_state: None,
+                entity: None,
+                item: None,
+                flag: None,
+                prompt: None,
+                enabled: None,
+            }],
+        };
 
-        dialogue_timer.timer.reset();
-        dialogue_timer.active = true;
+        // Spawn dynamic buttons
+        if let Ok(container_entity) = prop_btn_container_q.get_single() {
+            commands.entity(container_entity).despawn_descendants();
+
+            let button_image: Handle<Image> = asset_server.load("ui/Buttons/Button_Blue_3Slides.png");
+            let slicer = TextureSlicer {
+                border: BorderRect::square(12.0),
+                center_scale_mode: SliceScaleMode::Stretch,
+                sides_scale_mode: SliceScaleMode::Stretch,
+                max_corner_scale: 1.0,
+            };
+
+            commands.entity(container_entity).with_children(|parent| {
+                parent
+                    .spawn((
+                        PropPanelButton { index: 0 },
+                        Button,
+                        ImageNode {
+                            image: button_image.clone(),
+                            image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            ..default()
+                        },
+                        Node {
+                            width: Val::Px(220.0),
+                            height: Val::Px(38.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            margin: UiRect::vertical(Val::Px(4.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("Examine"),
+                            TextFont { font_size: 17.0, ..default() },
+                            TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
+                        ));
+                    });
+
+                // Nevermind button
+                parent
+                    .spawn((
+                        PropPanelButton { index: usize::MAX },
+                        Button,
+                        ImageNode {
+                            image: button_image.clone(),
+                            image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            ..default()
+                        },
+                        Node {
+                            width: Val::Px(220.0),
+                            height: Val::Px(38.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            margin: UiRect::vertical(Val::Px(4.0)),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
+                            Text::new("Nevermind"),
+                            TextFont { font_size: 17.0, ..default() },
+                            TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
+                        ));
+                    });
+            });
+        }
+
+        // Show prop panel
+        if let Ok(mut panel_vis) = prop_panel_q.get_single_mut() {
+            *panel_vis = Visibility::Visible;
+        }
+        prop_panel_state.open = true;
+        prop_panel_state.target_prop = Some(target_entity);
+        prop_panel_state.available_interactions = vec![legacy_interaction];
+
+        // Show cursor
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.cursor_options.grab_mode = CursorGrabMode::None;
+            window.cursor_options.visible = true;
+        }
+
         cooldown.0.reset();
     }
 }
@@ -2017,7 +2290,7 @@ pub fn npc_panel_close_system(
 /// Handles button clicks in the NPC interaction panel.
 pub fn npc_panel_button_system(
     mut interaction_q: Query<
-        (&bevy::ui::Interaction, &NpcPanelButton, &mut BackgroundColor),
+        (&bevy::ui::Interaction, &NpcPanelButton, &mut ImageNode),
         Changed<bevy::ui::Interaction>,
     >,
     mut npc_panel_state: ResMut<NpcPanelState>,
@@ -2025,13 +2298,13 @@ pub fn npc_panel_button_system(
     mut text_input_state: ResMut<text_input::TextInputState>,
     mut windows: Query<&mut Window>,
 ) {
-    for (interaction, button, mut bg) in &mut interaction_q {
+    for (interaction, button, mut img) in &mut interaction_q {
         match *interaction {
             bevy::ui::Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.22, 0.18, 0.28, 0.9));
+                img.color = Color::srgba(0.8, 0.8, 0.8, 1.0);
             }
             bevy::ui::Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.12, 0.1, 0.16, 0.85));
+                img.color = Color::WHITE;
             }
             bevy::ui::Interaction::Pressed => {
                 let target_npc = npc_panel_state.target_npc;
@@ -2065,6 +2338,129 @@ pub fn npc_panel_button_system(
                             window.cursor_options.visible = false;
                         }
                     }
+                    NpcPanelAction::Nevermind => {
+                        // Close panel (same as Esc)
+                        npc_panel_state.open = false;
+                        npc_panel_state.target_npc = None;
+                        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                            *panel_vis = Visibility::Hidden;
+                        }
+                        // Re-lock cursor
+                        if let Ok(mut window) = windows.get_single_mut() {
+                            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                            window.cursor_options.visible = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Closes the prop interaction panel when Escape is pressed.
+pub fn prop_panel_close_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut prop_panel_state: ResMut<PropPanelState>,
+    mut panel_q: Query<&mut Visibility, With<PropInteractionPanel>>,
+    mut commands: Commands,
+    container_q: Query<Entity, With<PropPanelButtonContainer>>,
+    mut windows: Query<&mut Window>,
+) {
+    if !prop_panel_state.open {
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::Escape) {
+        prop_panel_state.open = false;
+        prop_panel_state.target_prop = None;
+        prop_panel_state.available_interactions.clear();
+
+        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+            *panel_vis = Visibility::Hidden;
+        }
+
+        // Clear dynamic buttons
+        if let Ok(container) = container_q.get_single() {
+            commands.entity(container).despawn_descendants();
+        }
+
+        // Re-lock cursor for gameplay
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+            window.cursor_options.visible = false;
+        }
+    }
+}
+
+/// Handles button clicks in the prop interaction panel.
+pub fn prop_panel_button_system(
+    mut interaction_q: Query<
+        (&bevy::ui::Interaction, &PropPanelButton, &mut ImageNode),
+        Changed<bevy::ui::Interaction>,
+    >,
+    mut prop_panel_state: ResMut<PropPanelState>,
+    mut panel_q: Query<&mut Visibility, With<PropInteractionPanel>>,
+    mut windows: Query<&mut Window>,
+    mut commands: Commands,
+    container_q: Query<Entity, With<PropPanelButtonContainer>>,
+    mut interaction_events: EventWriter<interactions::InteractionEvent>,
+    player_q: Query<Entity, With<Player>>,
+    entity_id_q: Query<Option<&EntityId>>,
+) {
+    for (interaction, button, mut img) in &mut interaction_q {
+        match *interaction {
+            bevy::ui::Interaction::Hovered => {
+                img.color = Color::srgba(0.8, 0.8, 0.8, 1.0);
+            }
+            bevy::ui::Interaction::None => {
+                img.color = Color::WHITE;
+            }
+            bevy::ui::Interaction::Pressed => {
+                let target_prop = prop_panel_state.target_prop;
+                let is_nevermind = button.index == usize::MAX;
+
+                if !is_nevermind {
+                    // Execute the chosen interaction
+                    if let Some(target_entity) = target_prop {
+                        if let Some(chosen) = prop_panel_state.available_interactions.get(button.index) {
+                            let effects = interactions::execute_reaction(&chosen.reaction);
+                            let target_id = entity_id_q
+                                .get(target_entity)
+                                .ok()
+                                .flatten()
+                                .map(|eid| eid.0.clone())
+                                .unwrap_or_default();
+                            let actor = player_q.single();
+
+                            interaction_events.send(interactions::InteractionEvent {
+                                target: target_entity,
+                                target_id,
+                                actor,
+                                interaction_id: chosen.id.clone(),
+                                effects,
+                            });
+                        }
+                    }
+                }
+
+                // Close the panel
+                prop_panel_state.open = false;
+                prop_panel_state.target_prop = None;
+                prop_panel_state.available_interactions.clear();
+
+                if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                    *panel_vis = Visibility::Hidden;
+                }
+
+                // Clear dynamic buttons
+                if let Ok(container) = container_q.get_single() {
+                    commands.entity(container).despawn_descendants();
+                }
+
+                // Re-lock cursor
+                if let Ok(mut window) = windows.get_single_mut() {
+                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                    window.cursor_options.visible = false;
                 }
             }
         }
@@ -2223,10 +2619,11 @@ pub fn proximity_hint_system(
     dialogue_timer: Res<DialogueTimer>,
     text_input_state: Res<text_input::TextInputState>,
     npc_panel_state: Res<NpcPanelState>,
+    prop_panel_state: Res<PropPanelState>,
     global_flags: Res<interactions::GlobalFlags>,
 ) {
-    // Hide hint while dialogue is showing, text input is active, or NPC panel is open
-    if dialogue_timer.active || text_input_state.active || npc_panel_state.open {
+    // Hide hint while dialogue is showing, text input is active, or a panel is open
+    if dialogue_timer.active || text_input_state.active || npc_panel_state.open || prop_panel_state.open {
         let (mut visibility, _) = hint_q.single_mut();
         *visibility = Visibility::Hidden;
         return;
@@ -2336,141 +2733,14 @@ pub fn proximity_hint_system(
 /// Updates the interaction list panel: shows a clean vertical menu when the player
 /// is near an entity with multiple available interactions. Hidden otherwise.
 pub fn interaction_list_panel_system(
-    player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
-    interactable_q: Query<
-        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>, Option<&NpcPersonality>),
-        Without<Player>,
-    >,
     mut panel_q: Query<(&mut Visibility, &Children), With<InteractionListPanel>>,
-    mut entry_q: Query<(&InteractionListEntry, &mut Visibility, &mut BackgroundColor, &Children), Without<InteractionListPanel>>,
-    mut text_q: Query<&mut Text>,
-    mut text_color_q: Query<&mut TextColor>,
-    dialogue_timer: Res<DialogueTimer>,
-    text_input_state: Res<text_input::TextInputState>,
-    npc_panel_state: Res<NpcPanelState>,
-    global_flags: Res<interactions::GlobalFlags>,
-    selected: Res<interactions::SelectedInteraction>,
+    mut entry_q: Query<(&InteractionListEntry, &mut Visibility), Without<InteractionListPanel>>,
 ) {
-    let (mut panel_vis, _panel_children) = panel_q.single_mut();
-
-    // Hide panel when dialogue, text input, or NPC panel is active
-    if dialogue_timer.active || text_input_state.active || npc_panel_state.open {
-        *panel_vis = Visibility::Hidden;
-        // Also hide all entries explicitly
-        for (_, mut vis, _, _) in &mut entry_q {
-            *vis = Visibility::Hidden;
-        }
-        return;
-    }
-
-    let (_player_entity, player_tf, player_inv) = player_q.single();
-
-    // Find nearest entity with InteractionList
-    let mut nearest: Option<(Entity, f32)> = None;
-    for (entity, tf, opt_interactable, opt_list, _, _, opt_personality) in &interactable_q {
-        if opt_list.is_none() {
-            continue;
-        }
-        // Skip NPCs — they use the NPC interaction panel instead
-        let is_npc = opt_interactable.is_some_and(|i| i.is_npc) || opt_personality.is_some();
-        if is_npc {
-            continue;
-        }
-        let dist = player_tf.translation.distance(tf.translation);
-        if dist < INTERACT_DISTANCE {
-            if nearest.is_none() || dist < nearest.unwrap().1 {
-                nearest = Some((entity, dist));
-            }
-        }
-    }
-
-    let Some((nearest_entity, _)) = nearest else {
-        *panel_vis = Visibility::Hidden;
-        // Hide all entries
-        for (_, mut vis, _, _) in &mut entry_q {
-            *vis = Visibility::Hidden;
-        }
-        return;
-    };
-
-    let Ok((_, _, _opt_interactable, opt_list, opt_state, _, _)) = interactable_q.get(nearest_entity) else {
-        *panel_vis = Visibility::Hidden;
-        return;
-    };
-
-    let Some(interaction_list) = opt_list else {
-        *panel_vis = Visibility::Hidden;
-        return;
-    };
-
-    let runtime = interactions::convert_interaction_list(interaction_list);
-    let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
-    let actor_inventory: Vec<String> = player_inv
-        .map(|inv| inv.items.clone())
-        .unwrap_or_default();
-    let all_entity_states: HashMap<String, String> = interactable_q
-        .iter()
-        .filter_map(|(_, _, _, _, opt_s, opt_eid, _)| {
-            match (opt_eid, opt_s) {
-                (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
-                _ => None,
-            }
-        })
-        .collect();
-
-    let available = interactions::get_available_interactions(
-        &runtime,
-        entity_state_str,
-        &actor_inventory,
-        &global_flags.0,
-        Some(&all_entity_states),
-    );
-
-    // Only show panel for multi-interaction (2+)
-    if available.len() < 2 {
-        *panel_vis = Visibility::Hidden;
-        for (_, mut vis, _, _) in &mut entry_q {
-            *vis = Visibility::Hidden;
-        }
-        return;
-    }
-
-    *panel_vis = Visibility::Visible;
-
-    let sel_idx = selected.index.min(available.len().saturating_sub(1));
-
-    // Update each entry row
-    for (entry, mut vis, mut bg, children) in &mut entry_q {
-        let i = entry.index;
-        if i < available.len() {
-            *vis = Visibility::Visible;
-            let is_selected = i == sel_idx;
-
-            // Highlight selected row
-            *bg = if is_selected {
-                BackgroundColor(Color::srgba(0.3, 0.25, 0.15, 0.6))
-            } else {
-                BackgroundColor(Color::NONE)
-            };
-
-            // Update text
-            let label = format!("{}. {}", i + 1, available[i].label);
-            if let Some(&text_child) = children.first() {
-                if let Ok(mut text) = text_q.get_mut(text_child) {
-                    **text = label;
-                }
-                // Update text color
-                if let Ok(mut tc) = text_color_q.get_mut(text_child) {
-                    *tc = if is_selected {
-                        TextColor(Color::srgb(0.95, 0.82, 0.4))
-                    } else {
-                        TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0))
-                    };
-                }
-            }
-        } else {
-            *vis = Visibility::Hidden;
-        }
+    // The old interaction list panel is disabled — props now use the centered prop panel.
+    let (mut panel_vis, _) = panel_q.single_mut();
+    *panel_vis = Visibility::Hidden;
+    for (_, mut vis) in &mut entry_q {
+        *vis = Visibility::Hidden;
     }
 }
 

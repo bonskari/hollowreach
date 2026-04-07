@@ -75,6 +75,12 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
             // Menu panel
             parent
                 .spawn((
+                    ImageNode {
+                        image: panel_image.clone(),
+                        image_mode: NodeImageMode::Sliced(slicer.clone()),
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.8),
+                        ..default()
+                    },
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
@@ -83,26 +89,8 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                         min_width: Val::Px(250.0),
                         ..default()
                     },
-                    
                 ))
                 .with_children(|panel| {
-                    // 9-slice border
-                    panel.spawn((
-                        ImageNode {
-                            image: panel_image.clone(),
-                            image_mode: NodeImageMode::Sliced(slicer.clone()),
-                            
-                            ..default()
-                        },
-                        Node {
-                            position_type: PositionType::Absolute,
-                            top: Val::Px(-4.0),
-                            left: Val::Px(-4.0),
-                            right: Val::Px(-4.0),
-                            bottom: Val::Px(-4.0),
-                            ..default()
-                        },
-                    ));
 
                     // Title
                     panel.spawn((
@@ -179,24 +167,26 @@ fn toggle_pause(
 }
 
 fn pause_button_system(
-    mut interaction_q: Query<(&Interaction, &PauseButton, &mut BackgroundColor), Changed<Interaction>>,
+    mut interaction_q: Query<(&Interaction, &PauseButton, &mut ImageNode), Changed<Interaction>>,
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
     mut exit: EventWriter<AppExit>,
     mut audio_settings: ResMut<crate::AudioSettings>,
 ) {
-    for (interaction, button, mut bg) in &mut interaction_q {
+    for (interaction, button, mut img) in &mut interaction_q {
         match *interaction {
             Interaction::Hovered => {
-                *bg = // hover handled separately
+                img.color = Color::srgba(0.8, 0.8, 0.8, 1.0);
                 continue;
             }
             Interaction::None => {
-                *bg = BackgroundColor(Color::srgba(0.15, 0.12, 0.2, 0.8));
+                img.color = Color::WHITE;
                 continue;
             }
-            Interaction::Pressed => {}
+            Interaction::Pressed => {
+                img.color = Color::srgba(0.6, 0.6, 0.6, 1.0);
+            }
         }
 
         match button.action {
