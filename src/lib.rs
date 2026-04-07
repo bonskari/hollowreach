@@ -1250,7 +1250,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ImageNode {
                         image: panel_image.clone(),
                         image_mode: NodeImageMode::Sliced(slicer.clone()),
-                        
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.8),
                         ..default()
                     },
                     Node {
@@ -1311,7 +1311,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                     ImageNode {
                         image: panel_image.clone(),
                         image_mode: NodeImageMode::Sliced(slicer.clone()),
-                        
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.8),
                         ..default()
                     },
                     Node {
@@ -1394,7 +1394,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                             ImageNode {
                                 image: panel_image.clone(),
                                 image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                
+                                color: Color::srgba(0.0, 0.0, 0.0, 0.8),
                                 ..default()
                             },
                             Node {
@@ -1504,7 +1504,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 ImageNode {
                                     image: panel_image.clone(),
                                     image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                    
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.8),
                                     ..default()
                                 },
                                 Node {
