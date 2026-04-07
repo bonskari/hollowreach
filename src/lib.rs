@@ -1250,7 +1250,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         flex_direction: FlexDirection::Column,
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
+                    // Panel image handles background
                     Visibility::Hidden,
                     ZIndex(10),
                 ))
@@ -1260,6 +1260,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ImageNode {
                             image: panel_image.clone(),
                             image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                             ..default()
                         },
                         Node {
@@ -1323,7 +1324,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         padding: UiRect::all(Val::Px(0.0)),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
+                    // Panel image handles background
                     Visibility::Hidden,
                     ZIndex(5),
                 ))
@@ -1333,6 +1334,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ImageNode {
                             image: panel_image.clone(),
                             image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                             ..default()
                         },
                         Node {
@@ -1417,7 +1419,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 max_width: Val::Px(340.0),
                                 ..default()
                             },
-                            BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.9)),
+                            // Panel image handles background
                         ))
                         .with_children(|panel| {
                             // 9-slice border
@@ -1425,6 +1427,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 ImageNode {
                                     image: panel_image.clone(),
                                     image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                                     ..default()
                                 },
                                 Node {
@@ -1533,6 +1536,7 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                                 ImageNode {
                                     image: panel_image.clone(),
                                     image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                                     ..default()
                                 },
                                 Node {

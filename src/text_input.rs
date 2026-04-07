@@ -111,7 +111,7 @@ pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.92)),
+            // Panel image handles background
             Visibility::Hidden,
             // Render on top of dialogue box (dialogue=20, text input=50, pause=200)
             GlobalZIndex(50),
@@ -122,6 +122,7 @@ pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer
                 ImageNode {
                     image: panel_image.clone(),
                     image_mode: NodeImageMode::Sliced(slicer.clone()),
+                    color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                     ..default()
                 },
                 Node {

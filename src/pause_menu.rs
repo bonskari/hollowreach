@@ -44,6 +44,7 @@ impl Plugin for PauseMenuPlugin {
 
 fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
     let panel_image = asset_server.load("ui/Panel/panel-025.png");
+    let button_image: Handle<Image> = asset_server.load("ui/Panel/panel-003.png");
     let slicer = TextureSlicer {
         border: BorderRect::square(20.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -78,7 +79,7 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                         min_width: Val::Px(250.0),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.08, 0.06, 0.12, 0.95)),
+                    // Panel image handles background
                 ))
                 .with_children(|panel| {
                     // 9-slice border
@@ -86,6 +87,7 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                         ImageNode {
                             image: panel_image.clone(),
                             image_mode: NodeImageMode::Sliced(slicer.clone()),
+                            color: Color::srgba(0.0, 0.0, 0.0, 0.5),
                             ..default()
                         },
                         Node {
@@ -124,14 +126,14 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                                     align_items: AlignItems::Center,
                                     ..default()
                                 },
-                                BackgroundColor(Color::srgba(0.15, 0.12, 0.2, 0.8)),
+                                
                                 BorderRadius::all(Val::Px(4.0)),
                             ))
                             .with_children(|btn| {
                                 btn.spawn((
                                     Text::new(label),
                                     TextFont { font_size: 18.0, ..default() },
-                                    TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                                    TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
                                 ));
                             });
                     }
@@ -180,7 +182,7 @@ fn pause_button_system(
     for (interaction, button, mut bg) in &mut interaction_q {
         match *interaction {
             Interaction::Hovered => {
-                *bg = BackgroundColor(Color::srgba(0.25, 0.2, 0.35, 0.9));
+                *bg = // hover handled separately
                 continue;
             }
             Interaction::None => {
