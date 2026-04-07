@@ -144,8 +144,14 @@ fn toggle_pause(
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
+    npc_panel_state: Res<crate::NpcPanelState>,
+    text_input_state: Res<crate::text_input::TextInputState>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
+        // Don't toggle pause if NPC panel or text input is open — Esc closes those first
+        if npc_panel_state.open || text_input_state.active {
+            return;
+        }
         pause.paused = !pause.paused;
 
         let mut vis = overlay_q.single_mut();

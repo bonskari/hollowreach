@@ -309,6 +309,45 @@ pub struct InteractionListEntry {
     pub index: usize,
 }
 
+/// Marker for the NPC interaction panel (centered on screen).
+#[derive(Component)]
+pub struct NpcInteractionPanel;
+
+/// Marker for the NPC name text inside the interaction panel.
+#[derive(Component)]
+pub struct NpcPanelName;
+
+/// Marker for the NPC role text inside the interaction panel.
+#[derive(Component)]
+pub struct NpcPanelRole;
+
+/// Button action in the NPC interaction panel.
+#[derive(Clone, Copy, PartialEq)]
+pub enum NpcPanelAction {
+    Say,
+    GiveItem,
+}
+
+/// Component on NPC panel buttons to identify their action.
+#[derive(Component)]
+pub struct NpcPanelButton {
+    pub action: NpcPanelAction,
+}
+
+/// Tracks the state of the NPC interaction panel.
+#[derive(Resource, Default)]
+pub struct NpcPanelState {
+    /// Whether the panel is currently open.
+    pub open: bool,
+    /// The NPC entity being interacted with.
+    pub target_npc: Option<Entity>,
+}
+
+/// Run condition: returns true when the NPC panel is NOT open.
+pub fn npc_panel_not_open(state: Res<NpcPanelState>) -> bool {
+    !state.open
+}
+
 /// Marker for the dialogue text (center screen).
 #[derive(Component)]
 pub struct DialogueText;
@@ -509,6 +548,7 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<IntroSfxState>()
             .init_resource::<EntityConfigs>()
             .init_resource::<AreaConfigs>()
+            .init_resource::<NpcPanelState>()
             .add_systems(Startup, (
                 load_entity_configs,
                 setup_scene,
@@ -523,19 +563,26 @@ impl Plugin for HollowreachPlugin {
                 (
                     player_movement
                         .run_if(pause_menu::game_not_paused)
-                        .run_if(text_input::text_input_not_active),
+                        .run_if(text_input::text_input_not_active)
+                        .run_if(npc_panel_not_open),
                     player_collision
                         .after(player_movement)
                         .run_if(pause_menu::game_not_paused),
                     player_look
                         .run_if(pause_menu::game_not_paused)
-                        .run_if(text_input::text_input_not_active),
-                    interact_system.run_if(pause_menu::game_not_paused),
+                        .run_if(text_input::text_input_not_active)
+                        .run_if(npc_panel_not_open),
+                    interact_system
+                        .run_if(pause_menu::game_not_paused)
+                        .run_if(npc_panel_not_open),
                     proximity_hint_system.run_if(pause_menu::game_not_paused),
                     interaction_list_panel_system.run_if(pause_menu::game_not_paused),
                     interaction_scroll_system
                         .run_if(pause_menu::game_not_paused)
-                        .run_if(text_input::text_input_not_active),
+                        .run_if(text_input::text_input_not_active)
+                        .run_if(npc_panel_not_open),
+                    npc_panel_button_system.run_if(pause_menu::game_not_paused),
+                    npc_panel_close_system.run_if(pause_menu::game_not_paused),
                     dialogue_fade_system.run_if(pause_menu::game_not_paused),
                     start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
@@ -1342,6 +1389,124 @@ pub fn setup_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
                         });
                 });
 
+            // --- NPC Interaction Panel (centered on screen) ---
+            parent
+                .spawn((
+                    NpcInteractionPanel,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    // No background on the full-screen overlay — just layout
+                    Visibility::Hidden,
+                    GlobalZIndex(100),
+                ))
+                .with_children(|overlay| {
+                    // Panel container
+                    overlay
+                        .spawn((
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
+                                min_width: Val::Px(280.0),
+                                max_width: Val::Px(340.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgba(0.05, 0.05, 0.08, 0.9)),
+                        ))
+                        .with_children(|panel| {
+                            // 9-slice border
+                            panel.spawn((
+                                ImageNode {
+                                    image: border_image.clone(),
+                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
+                                    ..default()
+                                },
+                                Node {
+                                    position_type: PositionType::Absolute,
+                                    top: Val::Px(-4.0),
+                                    left: Val::Px(-4.0),
+                                    right: Val::Px(-4.0),
+                                    bottom: Val::Px(-4.0),
+                                    ..default()
+                                },
+                            ));
+
+                            // NPC name (gold)
+                            panel.spawn((
+                                NpcPanelName,
+                                Text::new("NPC Name"),
+                                TextFont { font_size: 24.0, ..default() },
+                                TextColor(Color::srgb(0.95, 0.82, 0.4)),
+                                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
+                            ));
+
+                            // NPC role (grey)
+                            panel.spawn((
+                                NpcPanelRole,
+                                Text::new("Role"),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(Color::srgb(0.7, 0.7, 0.7)),
+                                Node { margin: UiRect::bottom(Val::Px(8.0)), ..default() },
+                            ));
+
+                            // Divider
+                            panel.spawn((
+                                ImageNode::new(divider_image.clone()),
+                                Node {
+                                    width: Val::Percent(90.0),
+                                    height: Val::Px(6.0),
+                                    margin: UiRect::vertical(Val::Px(8.0)),
+                                    ..default()
+                                },
+                            ));
+
+                            // Buttons
+                            for (label, action) in [
+                                ("Say", NpcPanelAction::Say),
+                                ("Give item", NpcPanelAction::GiveItem),
+                            ] {
+                                panel
+                                    .spawn((
+                                        NpcPanelButton { action },
+                                        Button,
+                                        Node {
+                                            width: Val::Px(220.0),
+                                            height: Val::Px(38.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            margin: UiRect::vertical(Val::Px(4.0)),
+                                            border: UiRect::all(Val::Px(1.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(Color::srgba(0.12, 0.1, 0.16, 0.85)),
+                                        BorderColor(Color::srgba(0.4, 0.35, 0.25, 0.6)),
+                                        BorderRadius::all(Val::Px(4.0)),
+                                    ))
+                                    .with_children(|btn| {
+                                        btn.spawn((
+                                            Text::new(label),
+                                            TextFont { font_size: 17.0, ..default() },
+                                            TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                                        ));
+                                    });
+                            }
+
+                            // Hint: [Esc] Close
+                            panel.spawn((
+                                Text::new("[Esc] Close"),
+                                TextFont { font_size: 13.0, ..default() },
+                                TextColor(Color::srgba(0.5, 0.48, 0.42, 0.6)),
+                                Node { margin: UiRect::top(Val::Px(12.0)), ..default() },
+                            ));
+                        });
+                });
+
             // --- Proximity hint with border ---
             parent
                 .spawn((
@@ -1659,16 +1824,21 @@ pub fn interact_system(
         Without<Player>,
     >,
     mut look_at_q: Query<&mut npc_look_at::NpcLookAt>,
-    mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
-    mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
-    mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
+    mut text_queries: ParamSet<(
+        Query<&mut Text, With<DialogueText>>,
+        Query<&mut Text, With<DialogueNameText>>,
+        Query<&mut Text, With<NpcPanelName>>,
+        Query<&mut Text, With<NpcPanelRole>>,
+    )>,
+    mut dialogue_box_q: Query<(Entity, &mut Visibility), (With<DialogueBox>, Without<NpcInteractionPanel>)>,
     mut dialogue_timer: ResMut<DialogueTimer>,
     mut commands: Commands,
-    mut tts_events: EventWriter<tts::TtsRequest>,
-    mut text_input_state: ResMut<text_input::TextInputState>,
     global_flags: Res<interactions::GlobalFlags>,
     selected: Res<interactions::SelectedInteraction>,
     mut interaction_events: EventWriter<interactions::InteractionEvent>,
+    mut npc_panel_state: ResMut<NpcPanelState>,
+    mut npc_panel_q: Query<&mut Visibility, (With<NpcInteractionPanel>, Without<DialogueBox>)>,
+    mut windows: Query<&mut Window>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -1703,6 +1873,45 @@ pub fn interact_system(
         return;
     };
 
+    // Check if this is an NPC — if so, open the NPC interaction panel
+    let is_npc = opt_interactable.is_some_and(|i| i.is_npc) || opt_personality.is_some();
+    if is_npc {
+        // Make NPC look at player
+        if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
+            look_at.target = Some(player_entity);
+        }
+
+        // Set panel name and role from personality or interactable
+        let npc_name = opt_personality
+            .map(|p| p.name.clone())
+            .or_else(|| opt_interactable.map(|i| i.name.clone()))
+            .unwrap_or_else(|| "Unknown".to_string());
+        let npc_role = opt_personality
+            .map(|p| p.role.clone())
+            .unwrap_or_default();
+
+        { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = npc_name; } }
+        { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = npc_role; } }
+
+        // Show the panel
+        if let Ok(mut panel_vis) = npc_panel_q.get_single_mut() {
+            *panel_vis = Visibility::Visible;
+        }
+        npc_panel_state.open = true;
+        npc_panel_state.target_npc = Some(target_entity);
+
+        // Show cursor
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.cursor_options.grab_mode = CursorGrabMode::None;
+            window.cursor_options.visible = true;
+        }
+
+        cooldown.0.reset();
+        return;
+    }
+
+    // --- Non-NPC path: props and other interactables ---
+
     // Try the new InteractionList path first
     if let Some(interaction_list) = opt_interaction_list {
         let runtime_interactions = interactions::convert_interaction_list(interaction_list);
@@ -1713,7 +1922,6 @@ pub fn interact_system(
             .map(|inv| inv.items.clone())
             .unwrap_or_default();
 
-        // Build entity state map from interactable_q for OtherEntityState conditions
         let all_entity_states: HashMap<String, String> = interactable_q
             .iter()
             .filter_map(|(_, _, _, _, opt_s, opt_eid, _)| {
@@ -1733,11 +1941,9 @@ pub fn interact_system(
         );
 
         if !available.is_empty() {
-            // Use the selected index (clamped)
             let idx = selected.index.min(available.len().saturating_sub(1));
             let chosen = &available[idx];
 
-            // Fire InteractionEvent
             let effects = interactions::execute_reaction(&chosen.reaction);
             let target_id = opt_entity_id
                 .map(|eid| eid.0.clone())
@@ -1751,7 +1957,6 @@ pub fn interact_system(
                 effects: effects.clone(),
             });
 
-            // Show dialogue for info_text or dialogue_prompt effects
             let display_text = effects.iter().find_map(|e| {
                 match e.effect_type {
                     interactions::ReactionEffectType::InfoText => e.text.clone(),
@@ -1760,7 +1965,6 @@ pub fn interact_system(
                 }
             });
 
-            // Determine name for the dialogue box
             let display_name = if let Some(interactable) = opt_interactable {
                 interactable.name.clone()
             } else {
@@ -1768,16 +1972,12 @@ pub fn interact_system(
             };
 
             if let Some(text_content) = display_text {
-                // Make NPC look at player
                 if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
                     look_at.target = Some(player_entity);
                 }
 
-                let mut name_text = dialogue_name_q.single_mut();
-                **name_text = display_name;
-
-                let mut text = dialogue_text_q.single_mut();
-                **text = text_content.clone();
+                { let mut q = text_queries.p1(); let mut t = q.single_mut(); **t = display_name; }
+                { let mut q = text_queries.p0(); let mut t = q.single_mut(); **t = text_content; }
 
                 let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
                 *box_vis = Visibility::Visible;
@@ -1789,20 +1989,6 @@ pub fn interact_system(
 
                 dialogue_timer.timer.reset();
                 dialogue_timer.active = true;
-
-                // NPC-specific: TTS + text input
-                let is_npc = opt_interactable.is_some_and(|i| i.is_npc);
-                if is_npc {
-                    let voice_profile = opt_personality
-                        .map(|p| p.voice_profile.clone())
-                        .unwrap_or_else(|| "default".to_string());
-                    tts_events.send(tts::TtsRequest {
-                        text: text_content,
-                        voice_profile,
-                        npc_entity: target_entity,
-                    });
-                    text_input::activate_text_input(&mut text_input_state, target_entity);
-                }
             }
 
             cooldown.0.reset();
@@ -1810,16 +1996,10 @@ pub fn interact_system(
         }
     }
 
-    // Legacy fallback: use the old Interactable component
+    // Legacy fallback: use the old Interactable component (non-NPC only)
     if let Some(interactable) = opt_interactable {
-        if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
-            look_at.target = Some(player_entity);
-        }
-        let mut name_text = dialogue_name_q.single_mut();
-        **name_text = interactable.name.clone();
-
-        let mut text = dialogue_text_q.single_mut();
-        **text = interactable.dialogue.clone();
+        { let mut q = text_queries.p1(); let mut t = q.single_mut(); **t = interactable.name.clone(); }
+        { let mut q = text_queries.p0(); let mut t = q.single_mut(); **t = interactable.dialogue.clone(); }
 
         let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
         *box_vis = Visibility::Visible;
@@ -1832,17 +2012,89 @@ pub fn interact_system(
         dialogue_timer.timer.reset();
         dialogue_timer.active = true;
         cooldown.0.reset();
+    }
+}
 
-        if interactable.is_npc {
-            let voice_profile = opt_personality
-                .map(|p| p.voice_profile.clone())
-                .unwrap_or_else(|| "default".to_string());
-            tts_events.send(tts::TtsRequest {
-                text: interactable.dialogue.clone(),
-                voice_profile,
-                npc_entity: target_entity,
-            });
-            text_input::activate_text_input(&mut text_input_state, target_entity);
+/// Closes the NPC interaction panel when Escape is pressed.
+pub fn npc_panel_close_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut npc_panel_state: ResMut<NpcPanelState>,
+    mut panel_q: Query<&mut Visibility, With<NpcInteractionPanel>>,
+    mut windows: Query<&mut Window>,
+) {
+    if !npc_panel_state.open {
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::Escape) {
+        npc_panel_state.open = false;
+        npc_panel_state.target_npc = None;
+
+        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+            *panel_vis = Visibility::Hidden;
+        }
+
+        // Re-lock cursor for gameplay
+        if let Ok(mut window) = windows.get_single_mut() {
+            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+            window.cursor_options.visible = false;
+        }
+    }
+}
+
+/// Handles button clicks in the NPC interaction panel.
+pub fn npc_panel_button_system(
+    mut interaction_q: Query<
+        (&bevy::ui::Interaction, &NpcPanelButton, &mut BackgroundColor),
+        Changed<bevy::ui::Interaction>,
+    >,
+    mut npc_panel_state: ResMut<NpcPanelState>,
+    mut panel_q: Query<&mut Visibility, With<NpcInteractionPanel>>,
+    mut text_input_state: ResMut<text_input::TextInputState>,
+    mut windows: Query<&mut Window>,
+) {
+    for (interaction, button, mut bg) in &mut interaction_q {
+        match *interaction {
+            bevy::ui::Interaction::Hovered => {
+                *bg = BackgroundColor(Color::srgba(0.22, 0.18, 0.28, 0.9));
+            }
+            bevy::ui::Interaction::None => {
+                *bg = BackgroundColor(Color::srgba(0.12, 0.1, 0.16, 0.85));
+            }
+            bevy::ui::Interaction::Pressed => {
+                let target_npc = npc_panel_state.target_npc;
+
+                match button.action {
+                    NpcPanelAction::Say => {
+                        // Close panel and open text input
+                        npc_panel_state.open = false;
+                        npc_panel_state.target_npc = None;
+                        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                            *panel_vis = Visibility::Hidden;
+                        }
+                        if let Some(npc_entity) = target_npc {
+                            text_input::activate_text_input(&mut text_input_state, npc_entity);
+                        }
+                        // Cursor stays visible (text input handles it)
+                    }
+                    NpcPanelAction::GiveItem => {
+                        // TODO: implement give item
+                        info!("Give item: not implemented yet");
+
+                        // Close panel
+                        npc_panel_state.open = false;
+                        npc_panel_state.target_npc = None;
+                        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                            *panel_vis = Visibility::Hidden;
+                        }
+                        // Re-lock cursor
+                        if let Ok(mut window) = windows.get_single_mut() {
+                            window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                            window.cursor_options.visible = false;
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1990,7 +2242,7 @@ pub fn interaction_scroll_system(
 pub fn proximity_hint_system(
     player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
     interactable_q: Query<
-        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>),
+        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>, Option<&NpcPersonality>),
         Without<Player>,
     >,
     mut hint_q: Query<(&mut Visibility, &Children), With<ProximityHintText>>,
@@ -1998,10 +2250,11 @@ pub fn proximity_hint_system(
     mut text_q: Query<&mut Text>,
     dialogue_timer: Res<DialogueTimer>,
     text_input_state: Res<text_input::TextInputState>,
+    npc_panel_state: Res<NpcPanelState>,
     global_flags: Res<interactions::GlobalFlags>,
 ) {
-    // Hide hint while dialogue is showing or text input is active
-    if dialogue_timer.active || text_input_state.active {
+    // Hide hint while dialogue is showing, text input is active, or NPC panel is open
+    if dialogue_timer.active || text_input_state.active || npc_panel_state.open {
         let (mut visibility, _) = hint_q.single_mut();
         *visibility = Visibility::Hidden;
         return;
@@ -2010,7 +2263,7 @@ pub fn proximity_hint_system(
 
     // Find nearest entity with Interactable or InteractionList
     let mut nearest: Option<(Entity, f32)> = None;
-    for (entity, tf, opt_interactable, opt_list, _, _) in &interactable_q {
+    for (entity, tf, opt_interactable, opt_list, _, _, _) in &interactable_q {
         if opt_interactable.is_none() && opt_list.is_none() {
             continue;
         }
@@ -2025,14 +2278,21 @@ pub fn proximity_hint_system(
     let (mut visibility, children) = hint_q.single_mut();
 
     if let Some((nearest_entity, _)) = nearest {
-        let Ok((_, _, opt_interactable, opt_list, opt_state, _)) = interactable_q.get(nearest_entity) else {
+        let Ok((_, _, opt_interactable, opt_list, opt_state, _, opt_personality)) = interactable_q.get(nearest_entity) else {
             *visibility = Visibility::Hidden;
             return;
         };
 
-        // Build simple hint text — only for single-interaction or legacy entities.
-        // Multi-interaction entities use the InteractionListPanel instead.
-        let hint_text = if let Some(interaction_list) = opt_list {
+        // NPCs always show a simple "[E] NPC Name" hint
+        let is_npc = opt_interactable.is_some_and(|i| i.is_npc) || opt_personality.is_some();
+        let hint_text = if is_npc {
+            let npc_name = opt_personality
+                .map(|p| p.name.clone())
+                .or_else(|| opt_interactable.map(|i| i.name.clone()))
+                .unwrap_or_else(|| "NPC".to_string());
+            format!("[E]  {}", npc_name)
+        } else if let Some(interaction_list) = opt_list {
+            // Non-NPC: build hint from available interactions
             let runtime = interactions::convert_interaction_list(interaction_list);
             let entity_state_str = opt_state.map(|s| s.0.as_str()).unwrap_or("default");
             let actor_inventory: Vec<String> = player_inv
@@ -2040,7 +2300,7 @@ pub fn proximity_hint_system(
                 .unwrap_or_default();
             let all_entity_states: HashMap<String, String> = interactable_q
                 .iter()
-                .filter_map(|(_, _, _, _, opt_s, opt_eid)| {
+                .filter_map(|(_, _, _, _, opt_s, opt_eid, _)| {
                     match (opt_eid, opt_s) {
                         (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
                         _ => None,
@@ -2057,7 +2317,6 @@ pub fn proximity_hint_system(
             );
 
             if available.is_empty() {
-                // No available interactions from InteractionList, try legacy
                 if let Some(interactable) = opt_interactable {
                     format!("[E]  {}", interactable.name)
                 } else {
@@ -2107,7 +2366,7 @@ pub fn proximity_hint_system(
 pub fn interaction_list_panel_system(
     player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
     interactable_q: Query<
-        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>),
+        (Entity, &Transform, Option<&Interactable>, Option<&InteractionList>, Option<&EntityState>, Option<&EntityId>, Option<&NpcPersonality>),
         Without<Player>,
     >,
     mut panel_q: Query<(&mut Visibility, &Children), With<InteractionListPanel>>,
@@ -2116,13 +2375,14 @@ pub fn interaction_list_panel_system(
     mut text_color_q: Query<&mut TextColor>,
     dialogue_timer: Res<DialogueTimer>,
     text_input_state: Res<text_input::TextInputState>,
+    npc_panel_state: Res<NpcPanelState>,
     global_flags: Res<interactions::GlobalFlags>,
     selected: Res<interactions::SelectedInteraction>,
 ) {
     let (mut panel_vis, _panel_children) = panel_q.single_mut();
 
-    // Hide panel when dialogue or text input is active
-    if dialogue_timer.active || text_input_state.active {
+    // Hide panel when dialogue, text input, or NPC panel is active
+    if dialogue_timer.active || text_input_state.active || npc_panel_state.open {
         *panel_vis = Visibility::Hidden;
         // Also hide all entries explicitly
         for (_, mut vis, _, _) in &mut entry_q {
@@ -2135,8 +2395,13 @@ pub fn interaction_list_panel_system(
 
     // Find nearest entity with InteractionList
     let mut nearest: Option<(Entity, f32)> = None;
-    for (entity, tf, _, opt_list, _, _) in &interactable_q {
+    for (entity, tf, opt_interactable, opt_list, _, _, opt_personality) in &interactable_q {
         if opt_list.is_none() {
+            continue;
+        }
+        // Skip NPCs — they use the NPC interaction panel instead
+        let is_npc = opt_interactable.is_some_and(|i| i.is_npc) || opt_personality.is_some();
+        if is_npc {
             continue;
         }
         let dist = player_tf.translation.distance(tf.translation);
@@ -2156,7 +2421,7 @@ pub fn interaction_list_panel_system(
         return;
     };
 
-    let Ok((_, _, _opt_interactable, opt_list, opt_state, _)) = interactable_q.get(nearest_entity) else {
+    let Ok((_, _, _opt_interactable, opt_list, opt_state, _, _)) = interactable_q.get(nearest_entity) else {
         *panel_vis = Visibility::Hidden;
         return;
     };
@@ -2173,7 +2438,7 @@ pub fn interaction_list_panel_system(
         .unwrap_or_default();
     let all_entity_states: HashMap<String, String> = interactable_q
         .iter()
-        .filter_map(|(_, _, _, _, opt_s, opt_eid)| {
+        .filter_map(|(_, _, _, _, opt_s, opt_eid, _)| {
             match (opt_eid, opt_s) {
                 (Some(eid), Some(state)) => Some((eid.0.clone(), state.0.clone())),
                 _ => None,
