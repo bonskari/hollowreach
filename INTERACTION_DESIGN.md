@@ -185,6 +185,32 @@ Items are not just objects — they are social currency:
 
 Items + speech = the player's entire toolkit for revolution.
 
+## Audio environment
+
+Context areas define **audio effects** via presets:
+
+```json
+{
+  "id": "tavern",
+  "ambient_sound": "tavern_ambience",
+  "audio_preset": "small_stone_room"
+}
+```
+
+Audio presets are defined in `assets/data/audio_presets.json`:
+```json
+{
+  "small_stone_room": { "reverb": 0.4, "echo_delay": 0.05, "dampening": 0.6 },
+  "large_cave": { "reverb": 0.8, "echo_delay": 0.3, "dampening": 0.2 },
+  "outdoor_open": { "reverb": 0.05, "echo_delay": 0.0, "dampening": 1.0 },
+  "forest": { "reverb": 0.1, "echo_delay": 0.0, "dampening": 0.8 }
+}
+```
+
+All sounds played in an area (footsteps, interactions, NPC voice) get the area's audio effect applied. Same footstep sounds different in a cave vs outdoors.
+
+Implementation: pre-baked effect variants of common sounds, or runtime DSP if Bevy supports it.
+
 ## Open questions
 
 - Text input UI: chat-style log or single-line input?

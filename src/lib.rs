@@ -435,6 +435,7 @@ pub struct FootstepAudio {
     pub wood: Vec<Handle<AudioSource>>,
     pub dirt: Vec<Handle<AudioSource>>,
     pub timer: Timer,
+    pub last_index: usize,
 }
 
 // --- Constants ---
@@ -1662,15 +1663,26 @@ pub fn dialogue_fade_system(
 
 /// Startup system: load footstep audio files and insert the FootstepAudio resource.
 pub fn load_footstep_audio(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let load = |paths: &[&str]| -> Vec<Handle<AudioSource>> {
-        paths.iter().map(|p| asset_server.load(format!("audio/footsteps/{p}"))).collect()
+    let load_glob = |prefix: &str| -> Vec<Handle<AudioSource>> {
+        let dir = std::path::Path::new("assets/audio/footsteps");
+        let mut handles = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(prefix) && name.ends_with(".wav") && !name.contains("Stop") {
+                    handles.push(asset_server.load(format!("audio/footsteps/{name}")));
+                }
+            }
+        }
+        handles
     };
     commands.insert_resource(FootstepAudio {
-        stone: load(&["stone_walk_01.wav", "stone_walk_02.wav", "stone_walk_03.wav"]),
-        grass: load(&["grass_walk_01.wav", "grass_walk_02.wav", "grass_walk_03.wav"]),
-        wood: load(&["wood_walk_01.wav", "wood_walk_02.wav", "wood_walk_03.wav"]),
-        dirt: load(&["dirt_walk_01.wav", "dirt_walk_02.wav", "dirt_walk_03.wav", "dirt_walk_04.wav", "dirt_walk_05.wav"]),
+        stone: load_glob("Foot_Conc_BootWalk"),
+        grass: load_glob("Foot_Grass_Walk"),
+        wood: load_glob("Foot_HdWood_BootWalk"),
+        dirt: load_glob("Foot_Dirt1_BootWalk"),
         timer: Timer::from_seconds(0.4, TimerMode::Repeating),
+        last_index: usize::MAX,
     });
 }
 
@@ -1708,12 +1720,37 @@ pub fn footstep_sound_system(
         let player_pos = player_q.single();
         let on_tiles = player_pos.translation.x.abs() < 9.0 && player_pos.translation.z.abs() < 9.0;
 
-        let sounds = if on_tiles { &footsteps.stone } else { &footsteps.grass };
+        let sounds: Vec<_> = if on_tiles {
+            footsteps.stone.clone()
+        } else {
+            footsteps.grass.clone()
+        };
+        let last = footsteps.last_index;
 
-        if !sounds.is_empty() {
-            // Random selection
-            let idx = (time.elapsed_secs() * 1000.0) as usize % sounds.len();
-            commands.spawn(AudioPlayer(sounds[idx].clone()));
+        if sounds.len() > 1 {
+            let mut idx = (time.elapsed_secs() * 7919.0) as usize % sounds.len();
+            if idx == last {
+                idx = (idx + 1) % sounds.len();
+            }
+            footsteps.last_index = idx;
+
+            let pitch = 0.93 + ((time.elapsed_secs() * 3571.0) % 1.0) * 0.14;
+            commands.spawn((
+                AudioPlayer(sounds[idx].clone()),
+                PlaybackSettings {
+                    speed: pitch,
+                    volume: bevy::audio::Volume::new(0.5),
+                    ..PlaybackSettings::DESPAWN
+                },
+            ));
+        } else if !sounds.is_empty() {
+            commands.spawn((
+                AudioPlayer(sounds[0].clone()),
+                PlaybackSettings {
+                    volume: bevy::audio::Volume::new(0.5),
+                    ..PlaybackSettings::DESPAWN
+                },
+            ));
         }
     }
 }
