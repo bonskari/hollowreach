@@ -12,6 +12,7 @@ pub mod debug_overlay;
 pub mod interactions;
 pub mod inventory;
 pub mod npc_ai;
+pub mod npc_look_at;
 pub mod pause_menu;
 pub mod text_input;
 
@@ -492,7 +493,8 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(inventory::InventoryPlugin)
             .add_plugins(npc_ai::NpcAiPlugin)
             .add_plugins(text_input::TextInputPlugin)
-            .add_plugins(pause_menu::PauseMenuPlugin);
+            .add_plugins(pause_menu::PauseMenuPlugin)
+            .add_plugins(npc_look_at::NpcLookAtPlugin);
     }
 }
 
@@ -713,18 +715,21 @@ pub fn spawn_from_configs(
 
             // Add NPC-specific components
             if let Some(ref p) = config.personality {
-                entity_cmd.insert(NpcPersonality {
-                    name: p.name.clone(),
-                    role: p.role.clone(),
-                    traits: p.traits.clone(),
-                    backstory: p.backstory.clone(),
-                    speech_style: p.speech_style.clone(),
-                    voice_profile: p.voice_profile.clone(),
-                    knowledge: p.knowledge.clone(),
-                    goals: p.goals.clone(),
-                    likes: p.likes.clone(),
-                    dislikes: p.dislikes.clone(),
-                });
+                entity_cmd.insert((
+                    NpcPersonality {
+                        name: p.name.clone(),
+                        role: p.role.clone(),
+                        traits: p.traits.clone(),
+                        backstory: p.backstory.clone(),
+                        speech_style: p.speech_style.clone(),
+                        voice_profile: p.voice_profile.clone(),
+                        knowledge: p.knowledge.clone(),
+                        goals: p.goals.clone(),
+                        likes: p.likes.clone(),
+                        dislikes: p.dislikes.clone(),
+                    },
+                    npc_look_at::NpcLookAt::default(),
+                ));
             }
 
             entity_cmd.insert(NpcInventory(config.inventory.clone()));
@@ -1460,8 +1465,9 @@ pub fn interact_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut cooldown: ResMut<InteractionCooldown>,
-    player_q: Query<&Transform, With<Player>>,
-    interactables: Query<(&Transform, &Interactable), Without<Player>>,
+    player_q: Query<(Entity, &Transform), With<Player>>,
+    interactables: Query<(Entity, &Transform, &Interactable), Without<Player>>,
+    mut look_at_q: Query<&mut npc_look_at::NpcLookAt>,
     mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
     mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
     mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
@@ -1477,19 +1483,23 @@ pub fn interact_system(
         return;
     }
 
-    let player_tf = player_q.single();
+    let (player_entity, player_tf) = player_q.single();
 
-    let mut closest: Option<(&Interactable, f32)> = None;
-    for (tf, interactable) in &interactables {
+    let mut closest: Option<(Entity, &Interactable, f32)> = None;
+    for (entity, tf, interactable) in &interactables {
         let dist = player_tf.translation.distance(tf.translation);
         if dist < INTERACT_DISTANCE {
-            if closest.is_none() || dist < closest.unwrap().1 {
-                closest = Some((interactable, dist));
+            if closest.is_none() || dist < closest.unwrap().2 {
+                closest = Some((entity, interactable, dist));
             }
         }
     }
 
-    if let Some((interactable, _)) = closest {
+    if let Some((npc_entity, interactable, _)) = closest {
+        // Make NPC look at player
+        if let Ok(mut look_at) = look_at_q.get_mut(npc_entity) {
+            look_at.target = Some(player_entity);
+        }
         // Set name
         let mut name_text = dialogue_name_q.single_mut();
         **name_text = interactable.name.clone();
