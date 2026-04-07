@@ -1720,6 +1720,7 @@ pub fn footstep_sound_system(
         let player_pos = player_q.single();
         let on_tiles = player_pos.translation.x.abs() < 9.0 && player_pos.translation.z.abs() < 9.0;
 
+        // TODO: audio environment presets with proper reverb DSP
         let sounds: Vec<_> = if on_tiles {
             footsteps.stone.clone()
         } else {

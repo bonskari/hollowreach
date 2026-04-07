@@ -159,56 +159,58 @@ pub fn update_debug_overlay(
 // --- Helpers ---
 
 fn read_ram_info() -> String {
-    let Ok(meminfo) = fs::read_to_string("/proc/meminfo") else {
+    // Read this process's RSS from /proc/self/status
+    let Ok(status) = fs::read_to_string("/proc/self/status") else {
         return "RAM: N/A".to_string();
     };
 
-    let mut total_kb: u64 = 0;
-    let mut available_kb: u64 = 0;
-
-    for line in meminfo.lines() {
-        if let Some(val) = line.strip_prefix("MemTotal:") {
-            total_kb = parse_meminfo_kb(val);
-        } else if let Some(val) = line.strip_prefix("MemAvailable:") {
-            available_kb = parse_meminfo_kb(val);
+    for line in status.lines() {
+        if let Some(val) = line.strip_prefix("VmRSS:") {
+            let rss_kb = val.trim().trim_end_matches(" kB").trim().parse::<u64>().unwrap_or(0);
+            let rss_mb = rss_kb / 1024;
+            return format!("RAM: {} MB", rss_mb);
         }
     }
 
-    if total_kb == 0 {
-        return "RAM: N/A".to_string();
-    }
-
-    let used_mb = (total_kb - available_kb) / 1024;
-    let total_mb = total_kb / 1024;
-    format!("RAM: {} / {} MB", used_mb, total_mb)
-}
-
-fn parse_meminfo_kb(val: &str) -> u64 {
-    val.trim()
-        .trim_end_matches("kB")
-        .trim()
-        .parse::<u64>()
-        .unwrap_or(0)
+    "RAM: N/A".to_string()
 }
 
 fn read_vram_info() -> String {
+    // Get this process's GPU memory usage via nvidia-smi
+    let pid = std::process::id();
     let output = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.used,memory.total",
-            "--format=csv,noheader,nounits",
-        ])
+        .args(["--query-compute-apps=pid,used_gpu_memory", "--format=csv,noheader,nounits"])
         .output();
 
     match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let line = stdout.trim();
-            let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
-            if parts.len() == 2 {
-                format!("VRAM: {} / {} MB", parts[0], parts[1])
-            } else {
-                "VRAM: N/A".to_string()
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                if parts.len() == 2 {
+                    if let Ok(p) = parts[0].parse::<u32>() {
+                        if p == pid {
+                            return format!("VRAM: {} MB", parts[1]);
+                        }
+                    }
+                }
             }
+            // Process not in compute apps, try graphics apps
+            let output2 = Command::new("nvidia-smi")
+                .args(["pmon", "-c", "1", "-s", "m"])
+                .output();
+            if let Ok(out2) = output2 {
+                let stdout2 = String::from_utf8_lossy(&out2.stdout);
+                for line in stdout2.lines() {
+                    if line.contains(&pid.to_string()) {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 4 {
+                            return format!("VRAM: {} MB", parts[3]);
+                        }
+                    }
+                }
+            }
+            "VRAM: N/A".to_string()
         }
         _ => "VRAM: N/A".to_string(),
     }
