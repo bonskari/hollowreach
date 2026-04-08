@@ -7,8 +7,8 @@
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
-use bevy::ui::widget::NodeImageMode;
 use bevy::window::CursorGrabMode;
+use crate::ui_helpers::{self, UiAssets};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -90,20 +90,7 @@ pub struct TextInputLabel;
 /// Creates the text input UI — a dark panel at the bottom of the screen,
 /// styled to match the existing dialogue box (Kenney Fantasy UI borders).
 /// Hidden by default; shown when the player selects "Say" on an NPC.
-pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
-        s.sampler = bevy::image::ImageSampler::nearest();
-    });
-    let button_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
-        s.sampler = bevy::image::ImageSampler::nearest();
-    });
-    let slicer = TextureSlicer {
-        border: BorderRect::square(18.0),
-        center_scale_mode: SliceScaleMode::Stretch,
-        sides_scale_mode: SliceScaleMode::Tile { stretch_value: 3.0 },
-        max_corner_scale: 2.0,
-    };
-
+pub fn setup_text_input_ui(mut commands: Commands, ui: Res<UiAssets>) {
     // Root container — anchored to bottom center, hidden by default
     commands
         .spawn((
@@ -116,37 +103,20 @@ pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer
                 flex_direction: FlexDirection::Column,
                 ..default()
             },
-            
             Visibility::Hidden,
-            // Render on top of dialogue box (dialogue=20, text input=50, pause=200)
             GlobalZIndex(50),
         ))
         .with_children(|box_parent| {
-            // 9-slice border overlay (matching dialogue box style)
-            box_parent.spawn((
-                ImageNode {
-                    image: panel_image.clone(),
-                    image_mode: NodeImageMode::Sliced(slicer.clone()),
-                    
-                    ..default()
-                },
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(-4.0),
-                    left: Val::Px(-4.0),
-                    right: Val::Px(-4.0),
-                    bottom: Val::Px(-4.0),
-                    ..default()
-                },
-            ));
-
-            // Content area with padding
+            // Panel with content
             box_parent
-                .spawn(Node {
-                    padding: UiRect::axes(Val::Px(24.0), Val::Px(16.0)),
-                    flex_direction: FlexDirection::Column,
-                    ..default()
-                })
+                .spawn((
+                    ui_helpers::panel_image_node(&ui),
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(16.0)),
+                        flex_direction: FlexDirection::Column,
+                        ..default()
+                    },
+                ))
                 .with_children(|content| {
                     // "Say to <NPC name>" label
                     content.spawn((
@@ -156,7 +126,7 @@ pub fn setup_text_input_ui(mut commands: Commands, asset_server: Res<AssetServer
                             font_size: 18.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.95, 0.82, 0.4)),
+                        TextColor(ui_helpers::COLOR_GOLD),
                     ));
 
                     // Spacer
@@ -264,6 +234,7 @@ pub fn text_input_system(
     mut label_q: Query<&mut Text, (With<TextInputLabel>, Without<TextInputDisplay>)>,
     mut windows: Query<&mut Window>,
     mut blink_timer: ResMut<CursorBlinkTimer>,
+    mut commands: Commands,
 ) {
     // Show/hide the input box based on state
     if let Ok(mut box_vis) = box_q.get_single_mut() {
@@ -302,6 +273,10 @@ pub fn text_input_system(
                         });
                     }
                 }
+                // Unfreeze NPC
+                if let Some(npc) = state.target_npc {
+                    commands.entity(npc).remove::<crate::npc_ai::NpcInteracting>();
+                }
                 deactivate_text_input(&mut state);
 
                 // Re-lock cursor for gameplay
@@ -316,6 +291,10 @@ pub fn text_input_system(
                 return;
             }
             KeyCode::Escape => {
+                // Unfreeze NPC
+                if let Some(npc) = state.target_npc {
+                    commands.entity(npc).remove::<crate::npc_ai::NpcInteracting>();
+                }
                 deactivate_text_input(&mut state);
 
                 // Re-lock cursor for gameplay
@@ -493,7 +472,7 @@ impl Plugin for TextInputPlugin {
         app.init_resource::<TextInputState>()
             .init_resource::<CursorBlinkTimer>()
             .add_event::<SayEvent>()
-            .add_systems(Startup, setup_text_input_ui)
+            .add_systems(Startup, setup_text_input_ui.after(ui_helpers::setup_ui_assets))
             .add_systems(
                 Update,
                 (

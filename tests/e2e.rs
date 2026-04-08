@@ -89,13 +89,15 @@ fn test_system(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut mouse_events: EventWriter<bevy::input::mouse::MouseMotion>,
     mut player_q: Query<&mut Transform, With<Player>>,
-    camera_q: Query<(&PlayerCamera, &GlobalTransform)>,
+    mut camera_q: Query<(&mut PlayerCamera, &GlobalTransform)>,
     _interactable_q: Query<(&Transform, &Interactable), Without<Player>>,
     cooldown: Option<Res<InteractionCooldown>>,
     ui_dialogue_q: Query<Entity, With<DialogueText>>,
     ui_hint_q: Query<Entity, With<ProximityHintText>>,
     window_q: Query<&Window>,
     mut exit: EventWriter<AppExit>,
+    mut pause_state: ResMut<hollowreach::pause_menu::PauseState>,
+    mut pause_overlay_q: Query<&mut Visibility, With<hollowreach::pause_menu::PauseOverlay>>,
 ) {
     runner.frame_in_phase += 1;
     let phase = runner.phase;
@@ -425,7 +427,7 @@ fn test_system(
                 });
             }
             if frame >= 5 {
-                let (cam, global_tf) = camera_q.single();
+                let (cam, global_tf) = camera_q.single_mut();
                 // cam.yaw is the intended yaw angle
                 // Player rotation = yaw (set by player_movement)
                 // Camera LOCAL rotation = yaw * pitch (set by player_look)
@@ -470,7 +472,7 @@ fn test_system(
                 });
             }
             if frame >= 5 {
-                let (cam, _) = camera_q.single();
+                let (cam, _) = camera_q.single_mut();
                 runner.check(
                     "pitch_clamp_down",
                     cam.pitch >= -PI / 2.0 + 0.04,
@@ -489,7 +491,7 @@ fn test_system(
                 });
             }
             if frame >= 5 {
-                let (cam, _) = camera_q.single();
+                let (cam, _) = camera_q.single_mut();
                 runner.check(
                     "pitch_clamp_up",
                     cam.pitch <= PI / 2.0 - 0.04,
@@ -619,14 +621,111 @@ fn test_system(
             }
         }
 
-        // ---- Phase 19: Wait for screenshots to save ----
+        // ---- Phase 19: UI Test — teleport near Grok, show hint ----
         19 => {
+            if frame == 1 {
+                println!("\n[15] UI: interact hint + NPC panel");
+                // Ensure not paused
+                pause_state.paused = false;
+                if let Ok(mut vis) = pause_overlay_q.get_single_mut() { *vis = Visibility::Hidden; }
+                let mut tf = player_q.single_mut();
+                tf.translation = Vec3::new(2.0, 1.0, 2.5);
+                tf.rotation = Quat::IDENTITY; // face -Z
+                // Reset camera pitch/yaw to look straight ahead
+                if let Ok((mut cam, _)) = camera_q.get_single_mut() {
+                    cam.pitch = -0.2; // slightly down to see NPC at ground level
+                    cam.yaw = 0.0;
+                }
+            }
+            if frame == 10 {
+                // Should be close enough and looking at Grok → hint visible
+                screenshot(&mut commands, "14_interact_hint");
+            }
+            if frame == 15 {
+                // Press E to open NPC panel
+                keyboard.press(KeyCode::KeyE);
+            }
+            if frame == 17 {
+                keyboard.release(KeyCode::KeyE);
+            }
+            if frame == 25 {
+                screenshot(&mut commands, "15_npc_panel");
+            }
+            if frame == 30 {
+                // Press Escape to close
+                keyboard.press(KeyCode::Escape);
+            }
+            if frame == 32 {
+                keyboard.release(KeyCode::Escape);
+            }
+            if frame == 40 {
+                screenshot(&mut commands, "16_after_npc_close");
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 20: UI Test — prop panel ----
+        20 => {
+            if frame == 1 {
+                println!("\n[16] UI: prop panel (chest)");
+                // Ensure not paused
+                pause_state.paused = false;
+                if let Ok(mut vis) = pause_overlay_q.get_single_mut() { *vis = Visibility::Hidden; }
+                let mut tf = player_q.single_mut();
+                tf.translation = Vec3::new(-7.0, 1.0, -6.0);
+                tf.rotation = Quat::IDENTITY;
+                if let Ok((mut cam, _)) = camera_q.get_single_mut() {
+                    cam.pitch = -0.3; // look down at chest
+                    cam.yaw = 0.0;
+                }
+            }
+            if frame == 10 {
+                screenshot(&mut commands, "17_prop_hint");
+            }
+            if frame == 15 {
+                keyboard.press(KeyCode::KeyE);
+            }
+            if frame == 17 {
+                keyboard.release(KeyCode::KeyE);
+            }
+            if frame == 25 {
+                screenshot(&mut commands, "18_prop_panel");
+            }
+            if frame == 35 {
+                keyboard.press(KeyCode::Escape);
+            }
+            if frame == 36 {
+                keyboard.release(KeyCode::Escape);
+            }
+            if frame == 45 {
+                screenshot(&mut commands, "19_after_prop_close");
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 21: Pause menu ----
+        21 => {
+            if frame == 1 {
+                println!("\n[17] UI: pause menu");
+                keyboard.press(KeyCode::Escape);
+            }
+            if frame == 3 {
+                keyboard.release(KeyCode::Escape);
+            }
+            if frame == 10 {
+                screenshot(&mut commands, "20_pause_menu");
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 22: Wait for screenshots to save ----
+        22 => {
             if frame >= 15 {
                 runner.next_phase();
             }
         }
 
-        // ---- Phase 20: Exit ----
+        // ---- Phase 23: Exit ----
         _ => {
             runner.report();
             let success = runner.all_passed();

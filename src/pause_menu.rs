@@ -3,7 +3,7 @@
 
 use bevy::prelude::*;
 use bevy::window::CursorGrabMode;
-use bevy::ui::widget::NodeImageMode;
+use crate::ui_helpers::{self, UiAssets};
 
 #[derive(Resource)]
 pub struct PauseState {
@@ -37,25 +37,17 @@ pub struct PauseMenuPlugin;
 impl Plugin for PauseMenuPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PauseState>()
-            .add_systems(Startup, setup_pause_menu)
-            .add_systems(Update, (toggle_pause, pause_button_system));
+            .add_systems(Startup, setup_pause_menu.after(ui_helpers::setup_ui_assets))
+            .add_systems(Update, (
+                toggle_pause
+                    .after(crate::npc_panel_close_system)
+                    .after(crate::prop_panel_close_system),
+                pause_button_system,
+            ));
     }
 }
 
-fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let panel_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
-        s.sampler = bevy::image::ImageSampler::nearest();
-    });
-    let button_image: Handle<Image> = asset_server.load_with_settings("ui/Panel/panel-012.png", |s: &mut bevy::image::ImageLoaderSettings| {
-        s.sampler = bevy::image::ImageSampler::nearest();
-    });
-    let slicer = TextureSlicer {
-        border: BorderRect::square(18.0),
-        center_scale_mode: SliceScaleMode::Stretch,
-        sides_scale_mode: SliceScaleMode::Tile { stretch_value: 3.0 },
-        max_corner_scale: 2.0,
-    };
-
+fn setup_pause_menu(mut commands: Commands, ui: Res<UiAssets>) {
     commands
         .spawn((
             PauseOverlay,
@@ -72,15 +64,9 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
             Visibility::Hidden,
         ))
         .with_children(|parent| {
-            // Menu panel
             parent
                 .spawn((
-                    ImageNode {
-                        image: panel_image.clone(),
-                        image_mode: NodeImageMode::Sliced(slicer.clone()),
-                        color: Color::srgba(0.0, 0.0, 0.0, 0.8),
-                        ..default()
-                    },
+                    ui_helpers::panel_image_node(&ui),
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
@@ -91,46 +77,20 @@ fn setup_pause_menu(mut commands: Commands, asset_server: Res<AssetServer>) {
                     },
                 ))
                 .with_children(|panel| {
-
-                    // Title
                     panel.spawn((
                         Text::new("Paused"),
                         TextFont { font_size: 32.0, ..default() },
-                        TextColor(Color::srgb(0.95, 0.82, 0.4)),
+                        TextColor(ui_helpers::COLOR_GOLD),
                         Node { margin: UiRect::bottom(Val::Px(16.0)), ..default() },
                     ));
 
-                    // Buttons
                     for (label, action) in [
                         ("Resume", PauseAction::Resume),
                         ("Save", PauseAction::Save),
                         ("Settings", PauseAction::Settings),
                         ("Quit", PauseAction::Quit),
                     ] {
-                        panel
-                            .spawn((
-                                PauseButton { action },
-                                Button,
-                                ImageNode {
-                                    image: button_image.clone(),
-                                    image_mode: NodeImageMode::Sliced(slicer.clone()),
-                                    ..default()
-                                },
-                                Node {
-                                    width: Val::Px(200.0),
-                                    height: Val::Px(40.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                            ))
-                            .with_children(|btn| {
-                                btn.spawn((
-                                    Text::new(label),
-                                    TextFont { font_size: 18.0, ..default() },
-                                    TextColor(Color::srgba(0.0, 0.0, 0.0, 1.0)),
-                                ));
-                            });
+                        ui_helpers::spawn_button(panel, &ui, label, PauseButton { action });
                     }
                 });
         });
@@ -142,11 +102,12 @@ fn toggle_pause(
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
     npc_panel_state: Res<crate::NpcPanelState>,
+    prop_panel_state: Res<crate::PropPanelState>,
     text_input_state: Res<crate::text_input::TextInputState>,
+    esc_consumed: Res<crate::EscapeConsumed>,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
-        // Don't toggle pause if NPC panel or text input is open — Esc closes those first
-        if npc_panel_state.open || text_input_state.active {
+        if npc_panel_state.open || prop_panel_state.open || text_input_state.active || esc_consumed.0 {
             return;
         }
         pause.paused = !pause.paused;
@@ -167,43 +128,30 @@ fn toggle_pause(
 }
 
 fn pause_button_system(
-    mut interaction_q: Query<(&Interaction, &PauseButton, &mut ImageNode), Changed<Interaction>>,
+    mut interaction_q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
     mut windows: Query<&mut Window>,
     mut exit: EventWriter<AppExit>,
     mut audio_settings: ResMut<crate::AudioSettings>,
 ) {
-    for (interaction, button, mut img) in &mut interaction_q {
-        match *interaction {
-            Interaction::Hovered => {
-                img.color = Color::srgba(0.8, 0.8, 0.8, 1.0);
-                continue;
-            }
-            Interaction::None => {
-                img.color = Color::WHITE;
-                continue;
-            }
-            Interaction::Pressed => {
-                img.color = Color::srgba(0.6, 0.6, 0.6, 1.0);
-            }
+    for (interaction, button) in &mut interaction_q {
+        if *interaction != Interaction::Pressed {
+            continue;
         }
 
         match button.action {
             PauseAction::Resume => {
                 pause.paused = false;
-                let mut vis = overlay_q.single_mut();
-                *vis = Visibility::Hidden;
+                *overlay_q.single_mut() = Visibility::Hidden;
                 let mut window = windows.single_mut();
                 window.cursor_options.grab_mode = CursorGrabMode::Locked;
                 window.cursor_options.visible = false;
             }
             PauseAction::Save => {
-                // TODO: implement save
                 println!("Save not implemented yet");
             }
             PauseAction::Settings => {
-                // Toggle master mute (0.0 ↔ 0.8). Full settings UI coming later.
                 if audio_settings.master_volume > 0.0 {
                     audio_settings.master_volume = 0.0;
                     info!("Audio: master muted");

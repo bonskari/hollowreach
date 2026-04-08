@@ -68,6 +68,11 @@ impl Default for NpcDecisionState {
     }
 }
 
+/// Marker: player is interacting with this NPC — stop all AI actions.
+/// Removed when the interaction panel closes.
+#[derive(Component)]
+pub struct NpcInteracting;
+
 /// Walk speed for NPC movement (units per second).
 #[derive(Component)]
 pub struct NpcWalkSpeed(pub f32);
@@ -238,7 +243,7 @@ fn build_context_hash(
 pub fn npc_decision_system(
     time: Res<Time>,
     mut queue: ResMut<NpcTurnQueue>,
-    mut npcs: Query<(Entity, &Transform, &mut NpcDecisionState), With<NpcBrain>>,
+    mut npcs: Query<(Entity, &Transform, &mut NpcDecisionState, Has<NpcInteracting>), With<NpcBrain>>,
     others: Query<(Entity, &Transform, Option<&Interactable>), Without<Player>>,
     player_query: Query<&Transform, With<Player>>,
     interactable_query: Query<(Entity, &Interactable, &Transform)>,
@@ -252,11 +257,17 @@ pub fn npc_decision_system(
     };
 
     // Tick cooldown for the current NPC.
-    let Ok((npc_entity, npc_tf, mut state)) = npcs.get_mut(current_entity) else {
+    let Ok((npc_entity, npc_tf, mut state, is_interacting)) = npcs.get_mut(current_entity) else {
         // Entity may have despawned — remove and advance.
         queue.remove(current_entity);
         return;
     };
+
+    // Player is interacting — skip this NPC's turn
+    if is_interacting {
+        queue.advance();
+        return;
+    }
 
     state.cooldown.tick(time.delta());
 
@@ -322,6 +333,7 @@ pub fn npc_execute_system(
             &Transform,
             Option<&Interactable>,
             Option<&mut NpcLookAt>,
+            Has<NpcInteracting>,
         ),
         With<NpcBrain>,
     >,
@@ -329,7 +341,12 @@ pub fn npc_execute_system(
     mut dialogue_timer: ResMut<DialogueTimer>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
 ) {
-    for (_entity, mut state, npc_tf, interactable, mut look_at) in &mut npcs {
+    for (_entity, mut state, npc_tf, interactable, mut look_at, is_interacting) in &mut npcs {
+        // Player is interacting with this NPC — freeze all actions
+        if is_interacting {
+            state.current_action = None;
+            continue;
+        }
         let Some(ref action) = state.current_action else {
             continue;
         };
@@ -413,14 +430,17 @@ pub fn npc_execute_system(
 /// No navmesh yet — NPCs walk in a straight line and slide along walls.
 pub fn npc_pathfinding_system(
     time: Res<Time>,
-    mut npcs: Query<(Entity, &mut Transform, &NpcDecisionState, &NpcWalkSpeed), With<NpcBrain>>,
+    mut npcs: Query<(Entity, &mut Transform, &NpcDecisionState, &NpcWalkSpeed, Has<NpcInteracting>), With<NpcBrain>>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
     collider_query: Query<(Entity, &Transform, &CircleCollider), Without<NpcBrain>>,
 ) {
     let static_aabbs = static_collision_aabbs();
     let dt = time.delta_secs();
 
-    for (npc_entity, mut npc_tf, state, speed) in &mut npcs {
+    for (npc_entity, mut npc_tf, state, speed, is_interacting) in &mut npcs {
+        if is_interacting {
+            continue;
+        }
         let target_entity = match &state.current_action {
             Some(NpcAction::MoveTo(e)) => *e,
             Some(NpcAction::Interact { entity, .. }) => *entity,
