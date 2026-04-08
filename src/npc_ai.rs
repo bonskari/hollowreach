@@ -77,6 +77,22 @@ pub struct NpcInteracting;
 #[derive(Component)]
 pub struct NpcWalkSpeed(pub f32);
 
+/// Tracks which animation is currently playing on this NPC, to avoid re-setting every frame.
+#[derive(Component, PartialEq, Eq, Clone, Copy)]
+pub enum NpcCurrentAnim {
+    Idle,
+    Walk,
+}
+
+/// Cached animation graphs — built once when clips are found.
+#[derive(Resource)]
+pub struct NpcAnimGraphs {
+    pub idle_graph: Handle<AnimationGraph>,
+    pub idle_node: AnimationNodeIndex,
+    pub walk_graph: Handle<AnimationGraph>,
+    pub walk_node: AnimationNodeIndex,
+}
+
 impl Default for NpcWalkSpeed {
     fn default() -> Self {
         Self(2.0)
@@ -147,6 +163,7 @@ impl Plugin for NpcAiPlugin {
             Update,
             (
                 npc_queue_init_system,
+                npc_anim_graph_init_system,
                 npc_decision_system
                     .after(npc_queue_init_system)
                     .run_if(pause_menu::game_not_paused),
@@ -158,6 +175,7 @@ impl Plugin for NpcAiPlugin {
                     .run_if(pause_menu::game_not_paused),
                 npc_animation_system
                     .after(npc_execute_system)
+                    .after(npc_anim_graph_init_system)
                     .run_if(pause_menu::game_not_paused),
             ),
         );
@@ -508,18 +526,18 @@ pub fn npc_pathfinding_system(
     }
 }
 
-/// Switches NPC animations between Walk and Idle_A based on their current action.
-///
-/// Walking NPCs play the "Walk" clip; idle NPCs play "Idle_A".
-pub fn npc_animation_system(
-    npcs: Query<(&NpcDecisionState, &Children), With<NpcBrain>>,
-    children_q: Query<&Children>,
-    mut animation_players: Query<&mut AnimationPlayer>,
+/// One-shot system: builds NpcAnimGraphs resource once walk+idle clips are available.
+pub fn npc_anim_graph_init_system(
+    mut commands: Commands,
+    existing: Option<Res<NpcAnimGraphs>>,
     gltf_assets: Res<Assets<Gltf>>,
     anim_sources: Res<AnimationSources>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    // Find walk and idle clips from loaded GLTFs.
+    if existing.is_some() {
+        return;
+    }
+
     let mut walk_clip: Option<Handle<AnimationClip>> = None;
     let mut idle_clip: Option<Handle<AnimationClip>> = None;
 
@@ -538,16 +556,34 @@ pub fn npc_animation_system(
                     }
                 }
             }
-            if walk_clip.is_some() && idle_clip.is_some() {
-                break;
-            }
         }
     }
 
-    let Some(walk) = walk_clip else { return };
-    let Some(idle) = idle_clip else { return };
+    let (Some(walk), Some(idle)) = (walk_clip, idle_clip) else { return };
 
-    for (state, npc_children) in &npcs {
+    let (walk_graph, walk_node) = AnimationGraph::from_clip(walk);
+    let (idle_graph, idle_node) = AnimationGraph::from_clip(idle);
+
+    commands.insert_resource(NpcAnimGraphs {
+        walk_graph: graphs.add(walk_graph),
+        walk_node,
+        idle_graph: graphs.add(idle_graph),
+        idle_node,
+    });
+}
+
+/// Switches NPC animations between Walk and Idle based on their current action.
+/// Only changes animation when state transitions (not every frame).
+pub fn npc_animation_system(
+    anim_graphs: Option<Res<NpcAnimGraphs>>,
+    mut npcs: Query<(Entity, &NpcDecisionState, &Children, Option<&NpcCurrentAnim>), With<NpcBrain>>,
+    children_q: Query<&Children>,
+    mut animation_players: Query<(Entity, &mut AnimationPlayer)>,
+    mut commands: Commands,
+) {
+    let Some(graphs) = anim_graphs else { return };
+
+    for (npc_entity, state, npc_children, current_anim) in &mut npcs {
         let is_walking = matches!(
             &state.current_action,
             Some(NpcAction::MoveTo(_))
@@ -555,42 +591,51 @@ pub fn npc_animation_system(
                 | Some(NpcAction::Give { .. })
         );
 
-        let desired_clip = if is_walking { &walk } else { &idle };
+        let desired = if is_walking { NpcCurrentAnim::Walk } else { NpcCurrentAnim::Idle };
 
-        // AnimationPlayer is typically on a descendant, not the NPC entity itself.
-        // Walk through children recursively to find it.
-        let mut found_player = false;
-        for child in npc_children.iter() {
-            if found_player {
-                break;
-            }
-            if let Ok(mut player) = animation_players.get_mut(child) {
-                let (graph, node_index) = AnimationGraph::from_clip(desired_clip.clone());
-                let graph_handle = graphs.add(graph);
-                // Only change if not already playing the right animation.
-                // We use a simple heuristic: if the active animations count is 0
-                // or we just re-check every frame (cheap enough for a few NPCs).
-                let _ = graph_handle; // We need to set it — but AnimationGraphHandle is on the entity.
-                // For simplicity, replay each frame (Bevy deduplicates internally).
-                let active = player.play(node_index);
-                active.repeat();
-                found_player = true;
-                continue;
-            }
-            // Check grandchildren.
-            if let Ok(grandchildren) = children_q.get(child) {
-                for gc in grandchildren.iter() {
-                    if let Ok(mut player) = animation_players.get_mut(gc) {
-                        let (graph, node_index) =
-                            AnimationGraph::from_clip(desired_clip.clone());
-                        let _graph_handle = graphs.add(graph);
-                        let active = player.play(node_index);
-                        active.repeat();
-                        found_player = true;
-                        break;
+        // Skip if already playing the right animation
+        if current_anim == Some(&desired) {
+            continue;
+        }
+
+        let (graph_handle, node_index) = match desired {
+            NpcCurrentAnim::Walk => (&graphs.walk_graph, graphs.walk_node),
+            NpcCurrentAnim::Idle => (&graphs.idle_graph, graphs.idle_node),
+        };
+
+        // Find AnimationPlayer in children/grandchildren
+        fn find_anim_player(
+            children: &Children,
+            children_q: &Query<&Children>,
+            players: &Query<(Entity, &mut AnimationPlayer)>,
+        ) -> Option<Entity> {
+            for child in children.iter() {
+                if players.get(child).is_ok() {
+                    return Some(child);
+                }
+                if let Ok(grandchildren) = children_q.get(child) {
+                    for gc in grandchildren.iter() {
+                        if players.get(gc).is_ok() {
+                            return Some(gc);
+                        }
                     }
                 }
             }
+            None
         }
+
+        let Some(player_entity) = find_anim_player(npc_children, &children_q, &animation_players) else {
+            continue;
+        };
+
+        // Set the graph handle on the entity and play the animation
+        commands.entity(player_entity).insert(AnimationGraphHandle(graph_handle.clone()));
+        if let Ok((_, mut player)) = animation_players.get_mut(player_entity) {
+            let active = player.play(node_index);
+            active.repeat();
+        }
+
+        // Mark which animation is playing
+        commands.entity(npc_entity).insert(desired);
     }
 }
