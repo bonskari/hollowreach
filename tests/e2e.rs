@@ -1,6 +1,6 @@
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
-use bevy::window::CursorGrabMode;
+use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
+use bevy::window::{CursorGrabMode, CursorOptions};
 use hollowreach::*;
 use std::f32::consts::PI;
 
@@ -87,7 +87,7 @@ fn test_system(
     mut runner: ResMut<TestRunner>,
     mut commands: Commands,
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
-    mut mouse_events: EventWriter<bevy::input::mouse::MouseMotion>,
+    mut mouse_events: MessageWriter<bevy::input::mouse::MouseMotion>,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut camera_q: Query<(&mut PlayerCamera, &GlobalTransform)>,
     _interactable_q: Query<(&Transform, &Interactable), Without<Player>>,
@@ -95,7 +95,8 @@ fn test_system(
     ui_dialogue_q: Query<Entity, With<DialogueText>>,
     ui_hint_q: Query<Entity, With<ProximityHintText>>,
     window_q: Query<&Window>,
-    mut exit: EventWriter<AppExit>,
+    cursor_options_q: Query<&CursorOptions>,
+    mut exit: MessageWriter<AppExit>,
     mut pause_state: ResMut<hollowreach::pause_menu::PauseState>,
     mut pause_overlay_q: Query<&mut Visibility, With<hollowreach::pause_menu::PauseOverlay>>,
 ) {
@@ -129,14 +130,14 @@ fn test_system(
             if frame == 1 {
                 println!("\n[2] Collision: walk into back wall");
                 // Place player facing the back wall, close to it
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, -8.0);
                 // Start walking forward (toward wall at z=-10)
                 keyboard.press(KeyCode::KeyW);
             }
             if frame >= 60 {
                 keyboard.release(KeyCode::KeyW);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 // Back wall is at z=-10, thickness 0.5, so surface is at z=-9.75
                 // If player walked through, z will be < -10
                 runner.check(
@@ -155,27 +156,27 @@ fn test_system(
         // ---- Phase 3: Walk into left wall (x = -10) ----
         3 => {
             if frame == 1 {
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(-8.0, 1.0, 0.0);
                 // Set camera yaw to face left (-X direction)
                 // We need to modify PlayerCamera yaw... use mouse event
             }
             if frame == 2 {
                 // Send large mouse motion to turn left
-                mouse_events.send(bevy::input::mouse::MouseMotion {
+                mouse_events.write(bevy::input::mouse::MouseMotion {
                     delta: Vec2::new(500.0, 0.0), // turn right a lot, then we'll walk
                 });
             }
             if frame == 5 {
                 // Now walk forward (which is now roughly toward -X due to yaw)
                 // Actually let's just directly test: teleport near left wall and press A
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(-8.0, 1.0, 0.0);
                 keyboard.press(KeyCode::KeyA);
             }
             if frame >= 60 {
                 keyboard.release(KeyCode::KeyA);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 runner.check(
                     "wall_collision_left",
                     tf.translation.x >= -10.5,
@@ -198,7 +199,7 @@ fn test_system(
             if frame == 1 {
                 println!("\n[3] Floor: does player stay above ground?");
                 // Place player at normal height
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 5.0);
             }
             // Walk for a while
@@ -207,7 +208,7 @@ fn test_system(
             }
             if frame >= 60 {
                 keyboard.release(KeyCode::KeyW);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 runner.check(
                     "player_stays_above_ground",
                     tf.translation.y >= 0.0,
@@ -234,13 +235,13 @@ fn test_system(
             if frame == 1 {
                 println!("\n[4] Boundaries: can player leave the map?");
                 // Place player at edge and walk outward
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 20.0);
                 keyboard.press(KeyCode::KeyS); // Walk backward (positive Z)
             }
             if frame >= 120 {
                 keyboard.release(KeyCode::KeyS);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 // Ground plane is 50x50, centered at origin, so edges at +-25
                 // But there's no wall on the south side
                 runner.check(
@@ -259,11 +260,11 @@ fn test_system(
         // ---- Phase 6: Verify boundary clamping works ----
         6 => {
             if frame == 1 {
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 100.0); // Way off map
             }
             if frame >= 5 {
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 runner.check(
                     "boundary_clamp_works",
                     tf.translation.z <= 25.0,
@@ -285,13 +286,13 @@ fn test_system(
                 // Reset camera yaw to face forward
                 // Pillar is at (-4, 2.5, -3), size 1x5x1
                 // Place player just in front of it
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(-4.0, 1.0, 0.0);
                 keyboard.press(KeyCode::KeyW);
             }
             if frame >= 60 {
                 keyboard.release(KeyCode::KeyW);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 // Pillar is at z=-3. If no collision, player will be past it
                 runner.check(
                     "pillar_collision",
@@ -311,13 +312,13 @@ fn test_system(
             if frame == 1 {
                 println!("\n[6] NPC collision: walk through The Wanderer");
                 // Wanderer at (5, 0.9, -5)
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(5.0, 1.0, 0.0);
                 keyboard.press(KeyCode::KeyW);
             }
             if frame >= 90 {
                 keyboard.release(KeyCode::KeyW);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 // Wanderer is at z=-5. If no collision, player will be past it
                 runner.check(
                     "npc_collision",
@@ -342,7 +343,7 @@ fn test_system(
                 println!("\n[7] Interaction: verify distance limit");
                 // Place player just outside interaction range of orb (at 3, 1.2, -2)
                 // INTERACT_DISTANCE is 3.5
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(3.0, 1.0, 2.0); // distance ~4.0
                 let dist = tf.translation.distance(Vec3::new(3.0, 1.2, -2.0));
                 runner.check(
@@ -369,7 +370,7 @@ fn test_system(
             if frame == 1 {
                 println!("\n[8] Interaction spam: rapid E pressing near NPC");
                 // Place player right next to The Keeper
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(-3.0, 1.0, -7.0);
             }
             // Spam E every 2 frames for 20 frames
@@ -418,16 +419,16 @@ fn test_system(
             if frame == 1 {
                 println!("\n[10] Camera: yaw duplication check");
                 // Reset everything: player at origin, no rotation
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 5.0);
                 tf.rotation = Quat::IDENTITY;
                 // Send a known mouse motion to set a specific yaw
-                mouse_events.send(bevy::input::mouse::MouseMotion {
+                mouse_events.write(bevy::input::mouse::MouseMotion {
                     delta: Vec2::new(200.0, 0.0), // horizontal only
                 });
             }
             if frame >= 5 {
-                let (cam, global_tf) = camera_q.single_mut();
+                let (cam, global_tf) = camera_q.single_mut().unwrap();
                 // cam.yaw is the intended yaw angle
                 // Player rotation = yaw (set by player_movement)
                 // Camera LOCAL rotation = yaw * pitch (set by player_look)
@@ -465,14 +466,14 @@ fn test_system(
         13 => {
             if frame == 1 {
                 println!("\n[11] Camera: extreme angles");
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 5.0);
-                mouse_events.send(bevy::input::mouse::MouseMotion {
+                mouse_events.write(bevy::input::mouse::MouseMotion {
                     delta: Vec2::new(0.0, 10000.0),
                 });
             }
             if frame >= 5 {
-                let (cam, _) = camera_q.single_mut();
+                let (cam, _) = camera_q.single_mut().unwrap();
                 runner.check(
                     "pitch_clamp_down",
                     cam.pitch >= -PI / 2.0 + 0.04,
@@ -486,12 +487,12 @@ fn test_system(
         // ---- Phase 14: Look up extreme ----
         14 => {
             if frame == 1 {
-                mouse_events.send(bevy::input::mouse::MouseMotion {
+                mouse_events.write(bevy::input::mouse::MouseMotion {
                     delta: Vec2::new(0.0, -20000.0),
                 });
             }
             if frame >= 5 {
-                let (cam, _) = camera_q.single_mut();
+                let (cam, _) = camera_q.single_mut().unwrap();
                 runner.check(
                     "pitch_clamp_up",
                     cam.pitch <= PI / 2.0 - 0.04,
@@ -511,7 +512,7 @@ fn test_system(
             if frame == 1 {
                 println!("\n[12] Movement: diagonal speed check");
                 // Reset position and camera
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 5.0);
                 runner.saved_pos = Some(tf.translation);
                 // Walk forward only
@@ -519,11 +520,11 @@ fn test_system(
             }
             if frame == 31 {
                 keyboard.release(KeyCode::KeyW);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 let forward_dist = (tf.translation - runner.saved_pos.unwrap()).length();
                 runner.saved_float = Some(forward_dist);
                 // Reset
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 5.0);
                 runner.saved_pos = Some(tf.translation);
             }
@@ -535,7 +536,7 @@ fn test_system(
             if frame == 62 {
                 keyboard.release(KeyCode::KeyW);
                 keyboard.release(KeyCode::KeyD);
-                let tf = player_q.single();
+                let tf = player_q.single().unwrap();
                 let diag_dist = (tf.translation - runner.saved_pos.unwrap()).length();
                 let forward_dist = runner.saved_float.unwrap();
                 let ratio = diag_dist / forward_dist;
@@ -572,10 +573,11 @@ fn test_system(
             }
             if frame >= 15 {
                 // Check that double-escape returns to original state
-                let w = window_q.single();
+                let _w = window_q.single().unwrap();
+                let cursor_opts = cursor_options_q.single().unwrap();
                 // We don't know the current state for sure, but verify it's consistent
-                let locked = w.cursor_options.grab_mode == CursorGrabMode::Locked;
-                let hidden = !w.cursor_options.visible;
+                let locked = cursor_opts.grab_mode == CursorGrabMode::Locked;
+                let hidden = !cursor_opts.visible;
                 runner.check(
                     "cursor_state_consistent",
                     locked == hidden,
@@ -597,9 +599,9 @@ fn test_system(
             if frame == 1 {
                 println!("\n[14] Overview screenshots");
                 // Reset camera to neutral
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 8.0);
-                mouse_events.send(bevy::input::mouse::MouseMotion {
+                mouse_events.write(bevy::input::mouse::MouseMotion {
                     delta: Vec2::new(0.0, 3000.0), // reset pitch to look forward-ish
                 });
             }
@@ -612,7 +614,7 @@ fn test_system(
         18 => {
             if frame == 1 {
                 // Look at the scene from a high angle
-                let mut tf = player_q.single_mut();
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(0.0, 1.0, 0.0);
             }
             if frame >= 5 {
@@ -627,12 +629,12 @@ fn test_system(
                 println!("\n[15] UI: interact hint + NPC panel");
                 // Ensure not paused
                 pause_state.paused = false;
-                if let Ok(mut vis) = pause_overlay_q.get_single_mut() { *vis = Visibility::Hidden; }
-                let mut tf = player_q.single_mut();
+                if let Ok(mut vis) = pause_overlay_q.single_mut() { *vis = Visibility::Hidden; }
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(2.0, 1.0, 2.5);
                 tf.rotation = Quat::IDENTITY; // face -Z
                 // Reset camera pitch/yaw to look straight ahead
-                if let Ok((mut cam, _)) = camera_q.get_single_mut() {
+                if let Ok((mut cam, _)) = camera_q.single_mut() {
                     cam.pitch = -0.2; // slightly down to see NPC at ground level
                     cam.yaw = 0.0;
                 }
@@ -670,11 +672,11 @@ fn test_system(
                 println!("\n[16] UI: prop panel (chest)");
                 // Ensure not paused
                 pause_state.paused = false;
-                if let Ok(mut vis) = pause_overlay_q.get_single_mut() { *vis = Visibility::Hidden; }
-                let mut tf = player_q.single_mut();
+                if let Ok(mut vis) = pause_overlay_q.single_mut() { *vis = Visibility::Hidden; }
+                let mut tf = player_q.single_mut().unwrap();
                 tf.translation = Vec3::new(-7.0, 1.0, -6.0);
                 tf.rotation = Quat::IDENTITY;
-                if let Ok((mut cam, _)) = camera_q.get_single_mut() {
+                if let Ok((mut cam, _)) = camera_q.single_mut() {
                     cam.pitch = -0.3; // look down at chest
                     cam.yaw = 0.0;
                 }
@@ -730,9 +732,9 @@ fn test_system(
             runner.report();
             let success = runner.all_passed();
             if success {
-                exit.send(AppExit::Success);
+                exit.write(AppExit::Success);
             } else {
-                exit.send(AppExit::Error(1.try_into().unwrap()));
+                exit.write(AppExit::Error(1.try_into().unwrap()));
             }
         }
     }
@@ -747,7 +749,7 @@ fn main() {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "Hollowreach E2E Test".into(),
-                        resolution: (1280.0, 720.0).into(),
+                        resolution: bevy::window::WindowResolution::new(1280, 720),
                         ..default()
                     }),
                     ..default()

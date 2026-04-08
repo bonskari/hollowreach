@@ -14,7 +14,7 @@ use std::sync::{mpsc, Mutex};
 // ---------------------------------------------------------------------------
 
 /// Event sent when dialogue is shown and TTS audio should be generated.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct TtsRequest {
     pub text: String,
     pub voice_profile: String,
@@ -249,7 +249,7 @@ fn tts_startup(mut commands: Commands) {
 
 /// System that listens for TtsRequest events and sends them to the engine.
 fn tts_request_system(
-    mut events: EventReader<TtsRequest>,
+    mut events: MessageReader<TtsRequest>,
     mut engine: ResMut<TtsEngine>,
 ) {
     for req in events.read() {
@@ -297,7 +297,7 @@ fn tts_poll_system(
         commands.spawn((
             AudioPlayer::<AudioSource>(audio_handle),
             PlaybackSettings {
-                volume: bevy::audio::Volume::new(speech_vol),
+                volume: bevy::audio::Volume::Linear(speech_vol),
                 ..PlaybackSettings::DESPAWN
             },
             TtsAudioPlayback,
@@ -316,7 +316,7 @@ pub struct TtsPlugin;
 
 impl Plugin for TtsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<TtsRequest>()
+        app.add_message::<TtsRequest>()
             .add_systems(Startup, tts_startup)
             .add_systems(Update, (tts_request_system, tts_poll_system).chain());
     }

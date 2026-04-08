@@ -7,7 +7,7 @@
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
-use bevy::window::CursorGrabMode;
+use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::ui_helpers::{self, UiAssets};
 
 // ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ use crate::ui_helpers::{self, UiAssets};
 
 /// Fired when the player submits text to an NPC via the "Say" interaction.
 /// Will be consumed by the LLM system in a later phase.
-#[derive(Event)]
+#[derive(Message)]
 pub struct SayEvent {
     pub npc: Entity,
     pub text: String,
@@ -226,18 +226,18 @@ pub fn deactivate_text_input(state: &mut TextInputState) {
 /// Handles character input, backspace, enter (submit), and escape (cancel).
 pub fn text_input_system(
     mut state: ResMut<TextInputState>,
-    mut say_events: EventWriter<SayEvent>,
-    mut keyboard_events: EventReader<KeyboardInput>,
+    mut say_events: MessageWriter<SayEvent>,
+    mut keyboard_events: MessageReader<KeyboardInput>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut display_q: Query<&mut Text, With<TextInputDisplay>>,
     mut box_q: Query<&mut Visibility, With<TextInputBox>>,
     mut label_q: Query<&mut Text, (With<TextInputLabel>, Without<TextInputDisplay>)>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     mut blink_timer: ResMut<CursorBlinkTimer>,
     mut commands: Commands,
 ) {
     // Show/hide the input box based on state
-    if let Ok(mut box_vis) = box_q.get_single_mut() {
+    if let Ok(mut box_vis) = box_q.single_mut() {
         *box_vis = if state.active {
             Visibility::Visible
         } else {
@@ -250,9 +250,9 @@ pub fn text_input_system(
     }
 
     // Unlock cursor while typing
-    if let Ok(mut window) = windows.get_single_mut() {
-        window.cursor_options.grab_mode = CursorGrabMode::None;
-        window.cursor_options.visible = true;
+    if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+        cursor_opts.grab_mode = CursorGrabMode::None;
+        cursor_opts.visible = true;
     }
 
     // Process keyboard events
@@ -267,7 +267,7 @@ pub fn text_input_system(
                 let text = state.current_text.trim().to_string();
                 if !text.is_empty() {
                     if let Some(npc) = state.target_npc {
-                        say_events.send(SayEvent {
+                        say_events.write(SayEvent {
                             npc,
                             text,
                         });
@@ -280,9 +280,9 @@ pub fn text_input_system(
                 deactivate_text_input(&mut state);
 
                 // Re-lock cursor for gameplay
-                if let Ok(mut window) = windows.get_single_mut() {
-                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                    window.cursor_options.visible = false;
+                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+                    cursor_opts.grab_mode = CursorGrabMode::Locked;
+                    cursor_opts.visible = false;
                 }
 
                 // Reset blink timer
@@ -298,9 +298,9 @@ pub fn text_input_system(
                 deactivate_text_input(&mut state);
 
                 // Re-lock cursor for gameplay
-                if let Ok(mut window) = windows.get_single_mut() {
-                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                    window.cursor_options.visible = false;
+                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+                    cursor_opts.grab_mode = CursorGrabMode::Locked;
+                    cursor_opts.visible = false;
                 }
 
                 // Reset blink timer
@@ -324,12 +324,12 @@ pub fn text_input_system(
     }
 
     // Update display text
-    if let Ok(mut display) = display_q.get_single_mut() {
+    if let Ok(mut display) = display_q.single_mut() {
         **display = state.current_text.clone();
     }
 
     // Update label (could set NPC name here if available)
-    let _ = label_q.get_single_mut();
+    let _ = label_q.single_mut();
 }
 
 /// Blinks the text input cursor every 0.5 seconds.
@@ -349,7 +349,7 @@ pub fn cursor_blink_system(
         blink_timer.visible = !blink_timer.visible;
     }
 
-    if let Ok(mut color) = cursor_q.get_single_mut() {
+    if let Ok(mut color) = cursor_q.single_mut() {
         let alpha = if blink_timer.visible { 1.0 } else { 0.0 };
         *color = TextColor(Color::srgba(0.95, 0.82, 0.4, alpha));
     }
@@ -471,7 +471,7 @@ impl Plugin for TextInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TextInputState>()
             .init_resource::<CursorBlinkTimer>()
-            .add_event::<SayEvent>()
+            .add_message::<SayEvent>()
             .add_systems(Startup, setup_text_input_ui.after(ui_helpers::setup_ui_assets))
             .add_systems(
                 Update,

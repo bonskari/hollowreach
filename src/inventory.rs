@@ -62,7 +62,7 @@ impl NpcInventory {
 ///
 /// `entity_id` — the ECS entity string identifier of the world item being picked up.
 /// `item_id`   — the inventory string ID to add to the player's inventory.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct PickUpEvent {
     pub entity_id: String,
     pub item_id: String,
@@ -71,7 +71,7 @@ pub struct PickUpEvent {
 /// Transfer an item from one actor's inventory to another.
 ///
 /// Both `from` and `to` must have either a `PlayerInventory` or `NpcInventory`.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct GiveItemEvent {
     pub from: Entity,
     pub to: Entity,
@@ -101,7 +101,7 @@ pub struct InventoryUIText;
 /// it, then pushes `item_id` into the player's `PlayerInventory`.
 pub fn inventory_pickup_system(
     mut commands: Commands,
-    mut events: EventReader<PickUpEvent>,
+    mut events: MessageReader<PickUpEvent>,
     mut player_q: Query<&mut PlayerInventory>,
     names_q: Query<(Entity, &Name)>,
 ) {
@@ -124,7 +124,7 @@ pub fn inventory_pickup_system(
         }
 
         // Add item to the player's inventory.
-        let mut inv = player_q.single_mut();
+        let mut inv = player_q.single_mut().unwrap();
         inv.add(ev.item_id.clone());
         info!("Player picked up '{}'", ev.item_id);
     }
@@ -135,7 +135,7 @@ pub fn inventory_pickup_system(
 /// Both actors may have either `PlayerInventory` or `NpcInventory`. The system
 /// tries player inventories first, then NPC inventories.
 pub fn inventory_give_system(
-    mut events: EventReader<GiveItemEvent>,
+    mut events: MessageReader<GiveItemEvent>,
     mut player_q: Query<&mut PlayerInventory>,
     mut npc_q: Query<&mut NpcInventory>,
 ) {
@@ -237,8 +237,8 @@ pub fn inventory_ui_update_system(
     player_q: Query<&PlayerInventory>,
     mut text_q: Query<&mut Text, With<InventoryUIText>>,
 ) {
-    let inv = player_q.single();
-    let mut text = text_q.single_mut();
+    let inv = player_q.single().unwrap();
+    let mut text = text_q.single_mut().unwrap();
 
     if inv.items.is_empty() {
         **text = "(empty)".to_string();
@@ -261,8 +261,8 @@ pub struct InventoryPlugin;
 
 impl Plugin for InventoryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_event::<PickUpEvent>()
-            .add_event::<GiveItemEvent>()
+        app.add_message::<PickUpEvent>()
+            .add_message::<GiveItemEvent>()
             .add_systems(Startup, setup_inventory_ui)
             .add_systems(
                 Update,

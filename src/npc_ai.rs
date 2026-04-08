@@ -198,7 +198,7 @@ fn build_context_hash(
     let mut hasher = DefaultHasher::new();
 
     // Player position (quantised to 0.5-unit grid to reduce noise).
-    if let Ok(pt) = player_query.get_single() {
+    if let Ok(pt) = player_query.single() {
         let px = (pt.translation.x * 2.0).round() as i32;
         let pz = (pt.translation.z * 2.0).round() as i32;
         px.hash(&mut hasher);
@@ -272,7 +272,7 @@ pub fn npc_decision_system(
     state.cooldown.tick(time.delta());
 
     // Only decide when idle and cooldown finished.
-    if state.current_action.is_some() || !state.cooldown.finished() {
+    if state.current_action.is_some() || !state.cooldown.is_finished() {
         return;
     }
 
@@ -364,7 +364,7 @@ pub fn npc_execute_system(
                 let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
                 let full = format!("{speaker}: \"{text}\"");
 
-                if let Ok(mut dt) = dialogue_text.get_single_mut() {
+                if let Ok(mut dt) = dialogue_text.single_mut() {
                     **dt = full;
                 }
                 dialogue_timer.timer.reset();
@@ -560,7 +560,7 @@ pub fn npc_animation_system(
         // AnimationPlayer is typically on a descendant, not the NPC entity itself.
         // Walk through children recursively to find it.
         let mut found_player = false;
-        for &child in npc_children.iter() {
+        for child in npc_children.iter() {
             if found_player {
                 break;
             }
@@ -579,7 +579,7 @@ pub fn npc_animation_system(
             }
             // Check grandchildren.
             if let Ok(grandchildren) = children_q.get(child) {
-                for &gc in grandchildren.iter() {
+                for gc in grandchildren.iter() {
                     if let Ok(mut player) = animation_players.get_mut(gc) {
                         let (graph, node_index) =
                             AnimationGraph::from_clip(desired_clip.clone());

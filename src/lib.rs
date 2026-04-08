@@ -3,6 +3,9 @@ pub use bevy::input::mouse::MouseMotion;
 pub use bevy::prelude::*;
 pub use bevy::ui::widget::NodeImageMode;
 pub use bevy::window::CursorGrabMode;
+use bevy::window::CursorOptions;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -415,6 +418,13 @@ impl Default for DialogueTimer {
     }
 }
 
+/// Event sent when an NPC interaction panel opens, to show a greeting in the dialogue box.
+#[derive(Message)]
+pub struct NpcGreetingEvent {
+    pub npc_name: String,
+    pub greeting: String,
+}
+
 // --- Reusable UI animation components ---
 
 /// Fade in: opacity goes from 0 to 1 over duration. Optional delay before starting.
@@ -641,6 +651,7 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<EntityConfigs>()
             .init_resource::<AreaConfigs>()
             .init_resource::<NpcPanelState>()
+            .add_message::<NpcGreetingEvent>()
             .init_resource::<EscapeConsumed>()
             .init_resource::<PropPanelState>()
             .add_systems(First, |mut esc: ResMut<EscapeConsumed>| { esc.0 = false; })
@@ -706,6 +717,7 @@ impl Plugin for HollowreachPlugin {
                 (
                     handle_say_event.run_if(pause_menu::game_not_paused),
                     show_text_event_system.run_if(pause_menu::game_not_paused),
+                    handle_npc_greeting.run_if(pause_menu::game_not_paused),
                     ui_helpers::button_hover_system,
                 ),
             )
@@ -1183,11 +1195,11 @@ pub fn setup_scene(
             indices.extend_from_slice(&[0, 2, 1, 0, 3, 2]);
         }
 
-        let mut mesh = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+        mesh.insert_indices(Indices::U32(indices));
 
         commands.spawn((
             Mesh3d(meshes.add(mesh)),
@@ -1218,11 +1230,11 @@ pub fn setup_scene(
         let uvs = vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]];
         let indices = if x > 0.0 { vec![0u32, 2, 1] } else { vec![0u32, 1, 2] };
 
-        let mut mesh = Mesh::new(bevy::render::mesh::PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+        let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
         mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
         mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
         mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+        mesh.insert_indices(Indices::U32(indices));
 
         commands.spawn((
             Mesh3d(meshes.add(mesh)),
@@ -1265,9 +1277,10 @@ pub fn setup_scene(
     commands.insert_resource(ClearColor(Color::srgb(0.45, 0.55, 0.75)));
 
     // --- Lighting ---
-    commands.insert_resource(AmbientLight {
+    commands.spawn(AmbientLight {
         color: Color::srgb(0.5, 0.55, 0.7),
         brightness: 80.0,
+        affects_lightmapped_meshes: true,
     });
 
     // Sun
@@ -1377,7 +1390,7 @@ pub fn setup_ui(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                                 Text::new(""),
                                 TextFont { font_size: 17.0, ..default() },
                                 TextColor(COLOR_BODY),
-                                TextLayout::new_with_justify(JustifyText::Left),
+                                TextLayout::new_with_justify(Justify::Left),
                             ));
                         });
                 });
@@ -1444,8 +1457,9 @@ pub fn setup_ui(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                         position_type: PositionType::Absolute,
                         width: Val::Percent(100.0),
                         height: Val::Percent(100.0),
-                        justify_content: JustifyContent::Center,
+                        justify_content: JustifyContent::FlexStart,
                         align_items: AlignItems::Center,
+                        padding: UiRect::top(Val::Percent(15.0)),
                         ..default()
                     },
                     Visibility::Hidden,
@@ -1576,7 +1590,7 @@ pub fn setup_ui(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                                 Text::new(""),
                                 TextFont { font_size: 15.0, ..default() },
                                 TextColor(COLOR_GOLD),
-                                TextLayout::new_with_justify(JustifyText::Center),
+                                TextLayout::new_with_justify(Justify::Center),
                             ));
                         });
                 });
@@ -1689,8 +1703,8 @@ pub fn intro_system(
 
     // At 4.8s: despawn entire overlay (removes all children), start ambient audio
     if intro.elapsed > 4.8 && intro.elapsed - time.delta_secs() <= 4.8 {
-        if let Ok(overlay) = overlay_q.get_single() {
-            commands.entity(overlay).despawn_recursive();
+        if let Ok(overlay) = overlay_q.single() {
+            commands.entity(overlay).despawn();
         }
 
         // Start looping ambient audio (fire crackling in the tavern)
@@ -1698,7 +1712,7 @@ pub fn intro_system(
         let ambient_entity = commands.spawn((
             AudioPlayer::<AudioSource>(asset_server.load("audio/ambient/village_ambient.wav")),
             PlaybackSettings {
-                volume: bevy::audio::Volume::new(music_vol),
+                volume: bevy::audio::Volume::Linear(music_vol),
                 ..PlaybackSettings::LOOP
             },
         )).id();
@@ -1727,7 +1741,7 @@ pub fn intro_sfx_system(
                 IntroSfx,
                 AudioPlayer::<AudioSource>(sound),
                 PlaybackSettings {
-                    volume: bevy::audio::Volume::new(vol),
+                    volume: bevy::audio::Volume::Linear(vol),
                     ..PlaybackSettings::DESPAWN
                 },
             ));
@@ -1736,10 +1750,10 @@ pub fn intro_sfx_system(
     }
 }
 
-pub fn grab_cursor(mut windows: Query<&mut Window>) {
-    let mut window = windows.single_mut();
-    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-    window.cursor_options.visible = false;
+pub fn grab_cursor(mut cursor_q: Query<&mut CursorOptions>) {
+    let mut cursor_opts = cursor_q.single_mut().unwrap();
+    cursor_opts.grab_mode = CursorGrabMode::Locked;
+    cursor_opts.visible = false;
 }
 
 // --- Player Systems ---
@@ -1750,8 +1764,8 @@ pub fn player_movement(
     mut player_q: Query<&mut Transform, With<Player>>,
     camera_q: Query<&PlayerCamera>,
 ) {
-    let mut transform = player_q.single_mut();
-    let camera = camera_q.single();
+    let mut transform = player_q.single_mut().unwrap();
+    let camera = camera_q.single().unwrap();
 
     let speed = 5.0;
     let mut direction = Vec3::ZERO;
@@ -1788,7 +1802,7 @@ pub fn player_collision(
     mut player_q: Query<&mut Transform, With<Player>>,
     colliders: Query<(&Transform, &CircleCollider), Without<Player>>,
 ) {
-    let mut transform = player_q.single_mut();
+    let mut transform = player_q.single_mut().unwrap();
     let mut pos = transform.translation;
 
     // 1. Static collision against walls
@@ -1822,12 +1836,12 @@ pub fn player_collision(
 }
 
 pub fn player_look(
-    mut mouse_motion: EventReader<MouseMotion>,
+    mut mouse_motion: MessageReader<MouseMotion>,
     sensitivity: Res<MouseSensitivity>,
     mut camera_q: Query<(&mut PlayerCamera, &mut Transform)>,
 ) {
 
-    let (mut camera, mut cam_transform) = camera_q.single_mut();
+    let (mut camera, mut cam_transform) = camera_q.single_mut().unwrap();
 
     for ev in mouse_motion.read() {
         camera.yaw -= ev.delta.x * sensitivity.0;
@@ -1864,7 +1878,7 @@ pub fn interact_system(
     mut prop_panel_q: Query<&mut Visibility, (With<PropInteractionPanel>, Without<NpcInteractionPanel>)>,
     prop_btn_container_q: Query<Entity, With<PropPanelButtonContainer>>,
     ui_assets: Res<ui_helpers::UiAssets>,
-    mut windows: Query<&mut Window>,
+    mut cursor_and_events: (Query<&mut CursorOptions>, MessageWriter<NpcGreetingEvent>),
 ) {
     let (ref mut npc_panel_state, ref mut prop_panel_state) = panel_state;
     cooldown.0.tick(time.delta());
@@ -1872,12 +1886,12 @@ pub fn interact_system(
     if !keyboard.just_pressed(KeyCode::KeyE) {
         return;
     }
-    if !cooldown.0.finished() {
+    if !cooldown.0.is_finished() {
         return;
     }
 
-    let (player_entity, player_tf, player_inv) = player_q.single();
-    let camera = camera_q.single();
+    let (player_entity, player_tf, player_inv) = player_q.single().unwrap();
+    let camera = camera_q.single().unwrap();
 
     // Find the entity the player is looking at (distance + angle check)
     let candidates = interactable_q.iter().filter_map(|(entity, tf, opt_i, opt_l, _, _, _)| {
@@ -1909,20 +1923,43 @@ pub fn interact_system(
             .map(|p| p.role.clone())
             .unwrap_or_default();
 
-        { let mut q = text_queries.p0(); if let Ok(mut t) = q.get_single_mut() { **t = npc_name; } }
-        { let mut q = text_queries.p1(); if let Ok(mut t) = q.get_single_mut() { **t = npc_role; } }
+        { let mut q = text_queries.p0(); if let Ok(mut t) = q.single_mut() { **t = npc_name; } }
+        { let mut q = text_queries.p1(); if let Ok(mut t) = q.single_mut() { **t = npc_role; } }
 
         // Show the panel
-        if let Ok(mut panel_vis) = npc_panel_q.get_single_mut() {
+        if let Ok(mut panel_vis) = npc_panel_q.single_mut() {
             *panel_vis = Visibility::Visible;
         }
         npc_panel_state.open = true;
         npc_panel_state.target_npc = Some(target_entity);
 
+        // Send greeting event based on personality traits
+        {
+            let greeting_name = opt_personality
+                .map(|p| p.name.clone())
+                .or_else(|| opt_interactable.map(|i| i.name.clone()))
+                .unwrap_or_else(|| "Unknown".to_string());
+            let greeting = if let Some(personality) = opt_personality {
+                let traits_lower: Vec<String> = personality.traits.iter().map(|t| t.to_lowercase()).collect();
+                if traits_lower.iter().any(|t| t.contains("gruff") || t.contains("stern")) {
+                    "Hmm? What do you want?".to_string()
+                } else if traits_lower.iter().any(|t| t.contains("friendly") || t.contains("warm")) {
+                    "Well met, traveler!".to_string()
+                } else if traits_lower.iter().any(|t| t.contains("mysterious") || t.contains("quiet")) {
+                    "...".to_string()
+                } else {
+                    "Hello there.".to_string()
+                }
+            } else {
+                "Hello there.".to_string()
+            };
+            cursor_and_events.1.write(NpcGreetingEvent { npc_name: greeting_name, greeting });
+        }
+
         // Show cursor
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.cursor_options.grab_mode = CursorGrabMode::None;
-            window.cursor_options.visible = true;
+        if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::None;
+            cursor_opts.visible = true;
         }
 
         cooldown.0.reset();
@@ -1970,12 +2007,12 @@ pub fn interact_system(
                 .map(|s| s.0.clone())
                 .unwrap_or_default();
 
-            { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = prop_name; } }
-            { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = prop_subtitle; } }
+            { let mut q = text_queries.p2(); if let Ok(mut t) = q.single_mut() { **t = prop_name; } }
+            { let mut q = text_queries.p3(); if let Ok(mut t) = q.single_mut() { **t = prop_subtitle; } }
 
             // Spawn dynamic buttons into the prop panel button container
-            if let Ok(container_entity) = prop_btn_container_q.get_single() {
-                commands.entity(container_entity).despawn_descendants();
+            if let Ok(container_entity) = prop_btn_container_q.single() {
+                commands.entity(container_entity).despawn_children();
                 commands.entity(container_entity).with_children(|parent| {
                     for (i, interaction) in available.iter().enumerate() {
                         ui_helpers::spawn_button(parent, &ui_assets, &interaction.label, PropPanelButton { index: i });
@@ -1985,7 +2022,7 @@ pub fn interact_system(
             }
 
             // Show the prop panel
-            if let Ok(mut panel_vis) = prop_panel_q.get_single_mut() {
+            if let Ok(mut panel_vis) = prop_panel_q.single_mut() {
                 *panel_vis = Visibility::Visible;
             }
             prop_panel_state.open = true;
@@ -1993,9 +2030,9 @@ pub fn interact_system(
             prop_panel_state.available_interactions = available;
 
             // Show cursor
-            if let Ok(mut window) = windows.get_single_mut() {
-                window.cursor_options.grab_mode = CursorGrabMode::None;
-                window.cursor_options.visible = true;
+            if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+                cursor_opts.grab_mode = CursorGrabMode::None;
+                cursor_opts.visible = true;
             }
 
             cooldown.0.reset();
@@ -2007,8 +2044,8 @@ pub fn interact_system(
     // Show a prop panel with an "Examine" button
     if let Some(interactable) = opt_interactable {
         let prop_name = interactable.name.clone();
-        { let mut q = text_queries.p2(); if let Ok(mut t) = q.get_single_mut() { **t = prop_name; } }
-        { let mut q = text_queries.p3(); if let Ok(mut t) = q.get_single_mut() { **t = String::new(); } }
+        { let mut q = text_queries.p2(); if let Ok(mut t) = q.single_mut() { **t = prop_name; } }
+        { let mut q = text_queries.p3(); if let Ok(mut t) = q.single_mut() { **t = String::new(); } }
 
         // Create a synthetic interaction for the legacy dialogue
         let legacy_interaction = interactions::Interaction {
@@ -2030,8 +2067,8 @@ pub fn interact_system(
         };
 
         // Spawn dynamic buttons
-        if let Ok(container_entity) = prop_btn_container_q.get_single() {
-            commands.entity(container_entity).despawn_descendants();
+        if let Ok(container_entity) = prop_btn_container_q.single() {
+            commands.entity(container_entity).despawn_children();
             commands.entity(container_entity).with_children(|parent| {
                 ui_helpers::spawn_button(parent, &ui_assets, "Examine", PropPanelButton { index: 0 });
                 ui_helpers::spawn_button(parent, &ui_assets, "Nevermind", PropPanelButton { index: usize::MAX });
@@ -2039,7 +2076,7 @@ pub fn interact_system(
         }
 
         // Show prop panel
-        if let Ok(mut panel_vis) = prop_panel_q.get_single_mut() {
+        if let Ok(mut panel_vis) = prop_panel_q.single_mut() {
             *panel_vis = Visibility::Visible;
         }
         prop_panel_state.open = true;
@@ -2047,9 +2084,9 @@ pub fn interact_system(
         prop_panel_state.available_interactions = vec![legacy_interaction];
 
         // Show cursor
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.cursor_options.grab_mode = CursorGrabMode::None;
-            window.cursor_options.visible = true;
+        if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::None;
+            cursor_opts.visible = true;
         }
 
         cooldown.0.reset();
@@ -2061,7 +2098,7 @@ pub fn npc_panel_close_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut npc_panel_state: ResMut<NpcPanelState>,
     mut panel_q: Query<&mut Visibility, With<NpcInteractionPanel>>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     mut commands: Commands,
     mut esc_consumed: ResMut<EscapeConsumed>,
     mut cooldown: ResMut<InteractionCooldown>,
@@ -2079,13 +2116,13 @@ pub fn npc_panel_close_system(
         npc_panel_state.open = false;
         npc_panel_state.target_npc = None;
 
-        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+        if let Ok(mut panel_vis) = panel_q.single_mut() {
             *panel_vis = Visibility::Hidden;
         }
 
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.cursor_options.grab_mode = CursorGrabMode::Locked;
-            window.cursor_options.visible = false;
+        if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::Locked;
+            cursor_opts.visible = false;
         }
         cooldown.0.tick(std::time::Duration::from_secs(2));
     }
@@ -2100,7 +2137,7 @@ pub fn npc_panel_button_system(
     mut npc_panel_state: ResMut<NpcPanelState>,
     mut panel_q: Query<&mut Visibility, With<NpcInteractionPanel>>,
     mut text_input_state: ResMut<text_input::TextInputState>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     mut commands: Commands,
     mut cooldown: ResMut<InteractionCooldown>,
 ) {
@@ -2121,7 +2158,7 @@ pub fn npc_panel_button_system(
             NpcPanelAction::Say => {
                 npc_panel_state.open = false;
                 npc_panel_state.target_npc = None;
-                if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                if let Ok(mut panel_vis) = panel_q.single_mut() {
                     *panel_vis = Visibility::Hidden;
                 }
                 if let Some(npc_entity) = target_npc {
@@ -2132,23 +2169,23 @@ pub fn npc_panel_button_system(
                 info!("Give item: not implemented yet");
                 npc_panel_state.open = false;
                 npc_panel_state.target_npc = None;
-                if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                if let Ok(mut panel_vis) = panel_q.single_mut() {
                     *panel_vis = Visibility::Hidden;
                 }
-                if let Ok(mut window) = windows.get_single_mut() {
-                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                    window.cursor_options.visible = false;
+                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+                    cursor_opts.grab_mode = CursorGrabMode::Locked;
+                    cursor_opts.visible = false;
                 }
             }
             NpcPanelAction::Nevermind => {
                 npc_panel_state.open = false;
                 npc_panel_state.target_npc = None;
-                if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+                if let Ok(mut panel_vis) = panel_q.single_mut() {
                     *panel_vis = Visibility::Hidden;
                 }
-                if let Ok(mut window) = windows.get_single_mut() {
-                    window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                    window.cursor_options.visible = false;
+                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+                    cursor_opts.grab_mode = CursorGrabMode::Locked;
+                    cursor_opts.visible = false;
                 }
             }
         }
@@ -2164,7 +2201,7 @@ pub fn prop_panel_close_system(
     mut panel_q: Query<&mut Visibility, With<PropInteractionPanel>>,
     mut commands: Commands,
     container_q: Query<Entity, With<PropPanelButtonContainer>>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     mut esc_consumed: ResMut<EscapeConsumed>,
     mut cooldown: ResMut<InteractionCooldown>,
 ) {
@@ -2178,19 +2215,19 @@ pub fn prop_panel_close_system(
         prop_panel_state.target_prop = None;
         prop_panel_state.available_interactions.clear();
 
-        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+        if let Ok(mut panel_vis) = panel_q.single_mut() {
             *panel_vis = Visibility::Hidden;
         }
 
         // Clear dynamic buttons
-        if let Ok(container) = container_q.get_single() {
-            commands.entity(container).despawn_descendants();
+        if let Ok(container) = container_q.single() {
+            commands.entity(container).despawn_children();
         }
 
         // Re-lock cursor for gameplay
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.cursor_options.grab_mode = CursorGrabMode::Locked;
-            window.cursor_options.visible = false;
+        if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::Locked;
+            cursor_opts.visible = false;
         }
         cooldown.0.tick(std::time::Duration::from_secs(2));
     }
@@ -2204,10 +2241,10 @@ pub fn prop_panel_button_system(
     >,
     mut prop_panel_state: ResMut<PropPanelState>,
     mut panel_q: Query<&mut Visibility, With<PropInteractionPanel>>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     mut commands: Commands,
     container_q: Query<Entity, With<PropPanelButtonContainer>>,
-    mut interaction_events: EventWriter<interactions::InteractionEvent>,
+    mut interaction_events: MessageWriter<interactions::InteractionEvent>,
     player_q: Query<Entity, With<Player>>,
     entity_id_q: Query<Option<&EntityId>>,
     mut cooldown: ResMut<InteractionCooldown>,
@@ -2228,8 +2265,8 @@ pub fn prop_panel_button_system(
                         .flatten()
                         .map(|eid| eid.0.clone())
                         .unwrap_or_default();
-                    let actor = player_q.single();
-                    interaction_events.send(interactions::InteractionEvent {
+                    let actor = player_q.single().unwrap();
+                    interaction_events.write(interactions::InteractionEvent {
                         target: target_entity,
                         target_id,
                         actor,
@@ -2244,15 +2281,15 @@ pub fn prop_panel_button_system(
         prop_panel_state.open = false;
         prop_panel_state.target_prop = None;
         prop_panel_state.available_interactions.clear();
-        if let Ok(mut panel_vis) = panel_q.get_single_mut() {
+        if let Ok(mut panel_vis) = panel_q.single_mut() {
             *panel_vis = Visibility::Hidden;
         }
-        if let Ok(container) = container_q.get_single() {
-            commands.entity(container).despawn_descendants();
+        if let Ok(container) = container_q.single() {
+            commands.entity(container).despawn_children();
         }
-        if let Ok(mut window) = windows.get_single_mut() {
-            window.cursor_options.grab_mode = CursorGrabMode::Locked;
-            window.cursor_options.visible = false;
+        if let Ok(mut cursor_opts) = cursor_q.single_mut() {
+            cursor_opts.grab_mode = CursorGrabMode::Locked;
+            cursor_opts.visible = false;
         }
         cooldown.0.tick(std::time::Duration::from_secs(2));
     }
@@ -2261,7 +2298,7 @@ pub fn prop_panel_button_system(
 /// Handles SayEvent — for now, displays "You said: ..." in the dialogue box.
 /// Later, the LLM system will generate NPC responses.
 pub fn handle_say_event(
-    mut say_events: EventReader<text_input::SayEvent>,
+    mut say_events: MessageReader<text_input::SayEvent>,
     mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
     mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
     mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
@@ -2270,15 +2307,15 @@ pub fn handle_say_event(
 ) {
     for event in say_events.read() {
         // Set speaker name to "You"
-        let mut name_text = dialogue_name_q.single_mut();
+        let mut name_text = dialogue_name_q.single_mut().unwrap();
         **name_text = "You".to_string();
 
         // Set dialogue text
-        let mut text = dialogue_text_q.single_mut();
+        let mut text = dialogue_text_q.single_mut().unwrap();
         **text = format!("You said: {}", event.text);
 
         // Show dialogue box with slide-in animation
-        let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
+        let (box_entity, mut box_vis) = dialogue_box_q.single_mut().unwrap();
         *box_vis = Visibility::Visible;
         commands.entity(box_entity).insert(UiSlideIn {
             elapsed: 0.0,
@@ -2293,7 +2330,7 @@ pub fn handle_say_event(
 
 /// Shows text from interaction effects (info_text, dialogue_prompt) in the dialogue box.
 pub fn show_text_event_system(
-    mut events: EventReader<interactions::ShowTextEvent>,
+    mut events: MessageReader<interactions::ShowTextEvent>,
     mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
     mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
     mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
@@ -2301,13 +2338,42 @@ pub fn show_text_event_system(
     mut commands: Commands,
 ) {
     for event in events.read() {
-        let mut name_text = dialogue_name_q.single_mut();
+        let mut name_text = dialogue_name_q.single_mut().unwrap();
         **name_text = String::new();
 
-        let mut text = dialogue_text_q.single_mut();
+        let mut text = dialogue_text_q.single_mut().unwrap();
         **text = event.text.clone();
 
-        let (box_entity, mut box_vis) = dialogue_box_q.single_mut();
+        let (box_entity, mut box_vis) = dialogue_box_q.single_mut().unwrap();
+        *box_vis = Visibility::Visible;
+        commands.entity(box_entity).insert(UiSlideIn {
+            elapsed: 0.0,
+            duration: 0.35,
+            start_offset: 80.0,
+        });
+
+        dialogue_timer.timer.reset();
+        dialogue_timer.active = true;
+    }
+}
+
+/// Handles NpcGreetingEvent — shows an NPC greeting in the dialogue box.
+pub fn handle_npc_greeting(
+    mut events: MessageReader<NpcGreetingEvent>,
+    mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
+    mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
+    mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
+    mut dialogue_timer: ResMut<DialogueTimer>,
+    mut commands: Commands,
+) {
+    for event in events.read() {
+        let mut name_text = dialogue_name_q.single_mut().unwrap();
+        **name_text = event.npc_name.clone();
+
+        let mut text = dialogue_text_q.single_mut().unwrap();
+        **text = event.greeting.clone();
+
+        let (box_entity, mut box_vis) = dialogue_box_q.single_mut().unwrap();
         *box_vis = Visibility::Visible;
         commands.entity(box_entity).insert(UiSlideIn {
             elapsed: 0.0,
@@ -2324,7 +2390,7 @@ pub fn show_text_event_system(
 /// number keys (1-9) or mouse wheel when near an entity with multiple options.
 pub fn interaction_scroll_system(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut scroll_events: EventReader<bevy::input::mouse::MouseWheel>,
+    mut scroll_events: MessageReader<bevy::input::mouse::MouseWheel>,
     mut selected: ResMut<interactions::SelectedInteraction>,
     player_q: Query<(Entity, &Transform, Option<&inventory::PlayerInventory>), With<Player>>,
     camera_q: Query<&PlayerCamera>,
@@ -2334,8 +2400,8 @@ pub fn interaction_scroll_system(
     >,
     global_flags: Res<interactions::GlobalFlags>,
 ) {
-    let (_player_entity, player_tf, player_inv) = player_q.single();
-    let camera = camera_q.single();
+    let (_player_entity, player_tf, player_inv) = player_q.single().unwrap();
+    let camera = camera_q.single().unwrap();
 
     // Find entity the player is looking at
     let candidates = interactable_q.iter().filter_map(|(entity, tf, list, _, _)| {
@@ -2438,12 +2504,12 @@ pub fn proximity_hint_system(
 ) {
     // Hide hint while dialogue is showing, text input is active, or a panel is open
     if dialogue_timer.active || text_input_state.active || npc_panel_state.open || prop_panel_state.open {
-        let (mut visibility, _) = hint_q.single_mut();
+        let (mut visibility, _) = hint_q.single_mut().unwrap();
         *visibility = Visibility::Hidden;
         return;
     }
-    let player_tf = player_q.single();
-    let camera = camera_q.single();
+    let player_tf = player_q.single().unwrap();
+    let camera = camera_q.single().unwrap();
 
     // Find entity the player is looking at (distance + angle)
     let candidates = interactable_q.iter().filter_map(|(entity, tf, opt_i, opt_l, _)| {
@@ -2451,7 +2517,7 @@ pub fn proximity_hint_system(
     });
     let looked_at = find_looked_at_entity(player_tf.translation, camera, candidates);
 
-    let (mut visibility, children) = hint_q.single_mut();
+    let (mut visibility, children) = hint_q.single_mut().unwrap();
 
     if let Some((nearest_entity, _)) = looked_at {
         let Ok((_, _, opt_interactable, _, opt_personality)) = interactable_q.get(nearest_entity) else {
@@ -2475,7 +2541,7 @@ pub fn proximity_hint_system(
             fn find_text(entity: Entity, children_q: &Query<&Children>, text_q: &mut Query<&mut Text>) -> Option<Entity> {
                 if text_q.get(entity).is_ok() { return Some(entity); }
                 if let Ok(kids) = children_q.get(entity) {
-                    for &kid in kids.iter() {
+                    for kid in kids.iter() {
                         if let Some(found) = find_text(kid, children_q, text_q) { return Some(found); }
                     }
                 }
@@ -2502,7 +2568,7 @@ pub fn interaction_list_panel_system(
     mut entry_q: Query<(&InteractionListEntry, &mut Visibility), Without<InteractionListPanel>>,
 ) {
     // The old interaction list panel is disabled — props now use the centered prop panel.
-    let (mut panel_vis, _) = panel_q.single_mut();
+    let (mut panel_vis, _) = panel_q.single_mut().unwrap();
     *panel_vis = Visibility::Hidden;
     for (_, mut vis) in &mut entry_q {
         *vis = Visibility::Hidden;
@@ -2544,7 +2610,7 @@ pub fn ui_fade_out_system(
         if t >= 1.0 {
             commands.entity(entity).remove::<UiFadeOut>();
             if fade.despawn {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
         }
     }
@@ -2556,7 +2622,7 @@ pub fn ui_fade_out_system(
         if t >= 1.0 {
             commands.entity(entity).remove::<UiFadeOut>();
             if fade.despawn {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
         }
     }
@@ -2600,9 +2666,9 @@ pub fn dialogue_fade_system(
 
     dialogue_timer.timer.tick(time.delta());
 
-    if dialogue_timer.timer.finished() {
+    if dialogue_timer.timer.is_finished() {
         dialogue_timer.active = false;
-        let mut visibility = box_q.single_mut();
+        let mut visibility = box_q.single_mut().unwrap();
         *visibility = Visibility::Hidden;
     }
 }
@@ -2666,7 +2732,7 @@ pub fn footstep_sound_system(
     if footsteps.timer.just_finished() {
         // Determine surface type based on player position
         // Floor tiles cover -8..8, outside is grass
-        let player_pos = player_q.single();
+        let player_pos = player_q.single().unwrap();
         let on_tiles = player_pos.translation.x.abs() < 9.0 && player_pos.translation.z.abs() < 9.0;
 
         // TODO: audio environment presets with proper reverb DSP
@@ -2690,7 +2756,7 @@ pub fn footstep_sound_system(
                 AudioPlayer(sounds[idx].clone()),
                 PlaybackSettings {
                     speed: pitch,
-                    volume: bevy::audio::Volume::new(vol),
+                    volume: bevy::audio::Volume::Linear(vol),
                     ..PlaybackSettings::DESPAWN
                 },
             ));
@@ -2699,7 +2765,7 @@ pub fn footstep_sound_system(
             commands.spawn((
                 AudioPlayer(sounds[0].clone()),
                 PlaybackSettings {
-                    volume: bevy::audio::Volume::new(vol),
+                    volume: bevy::audio::Volume::Linear(vol),
                     ..PlaybackSettings::DESPAWN
                 },
             ));

@@ -140,7 +140,7 @@ pub struct EntityIdMap(pub HashMap<String, Entity>);
 // ---------------------------------------------------------------------------
 
 /// Fired when an actor triggers an interaction on a target entity.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct InteractionEvent {
     /// The Bevy entity being interacted with.
     pub target: Entity,
@@ -157,7 +157,7 @@ pub struct InteractionEvent {
 
 /// Fired by the effect system when an info text or dialogue prompt should
 /// be displayed to the player.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct ShowTextEvent {
     pub text: String,
     /// If true, this is a dialogue prompt that should be forwarded to the LLM.
@@ -165,13 +165,13 @@ pub struct ShowTextEvent {
 }
 
 /// Fired when a sound effect should be played.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct PlaySoundEvent {
     pub asset: String,
 }
 
 /// Fired when an animation should be played on an entity.
-#[derive(Event, Debug, Clone)]
+#[derive(Message, Debug, Clone)]
 pub struct PlayAnimationEvent {
     pub entity: Entity,
     pub anim: String,
@@ -291,15 +291,15 @@ pub fn execute_reaction(reaction_effects: &[ReactionEffect]) -> Vec<ReactionEffe
 /// state changes, flag mutations, inventory changes, and emitting downstream
 /// events for sound/animation/text that other systems consume.
 pub fn interaction_effect_system(
-    mut events: EventReader<InteractionEvent>,
+    mut events: MessageReader<InteractionEvent>,
     mut global_flags: ResMut<GlobalFlags>,
     entity_id_map: Res<EntityIdMap>,
     mut entity_states: Query<&mut EntityState>,
     mut player_inventories: Query<&mut PlayerInventory>,
     mut npc_inventories: Query<&mut NpcInventory>,
-    mut text_events: EventWriter<ShowTextEvent>,
-    mut sound_events: EventWriter<PlaySoundEvent>,
-    mut anim_events: EventWriter<PlayAnimationEvent>,
+    mut text_events: MessageWriter<ShowTextEvent>,
+    mut sound_events: MessageWriter<PlaySoundEvent>,
+    mut anim_events: MessageWriter<PlayAnimationEvent>,
 ) {
     for event in events.read() {
         for effect in &event.effects {
@@ -363,7 +363,7 @@ pub fn interaction_effect_system(
 
                 ReactionEffectType::Sound => {
                     if let Some(ref asset) = effect.asset {
-                        sound_events.send(PlaySoundEvent {
+                        sound_events.write(PlaySoundEvent {
                             asset: asset.clone(),
                         });
                     }
@@ -371,7 +371,7 @@ pub fn interaction_effect_system(
 
                 ReactionEffectType::Animation => {
                     if let Some(ref anim) = effect.anim {
-                        anim_events.send(PlayAnimationEvent {
+                        anim_events.write(PlayAnimationEvent {
                             entity: event.target,
                             anim: anim.clone(),
                         });
@@ -380,7 +380,7 @@ pub fn interaction_effect_system(
 
                 ReactionEffectType::ActorAnimation => {
                     if let Some(ref anim) = effect.anim {
-                        anim_events.send(PlayAnimationEvent {
+                        anim_events.write(PlayAnimationEvent {
                             entity: event.actor,
                             anim: anim.clone(),
                         });
@@ -389,7 +389,7 @@ pub fn interaction_effect_system(
 
                 ReactionEffectType::InfoText => {
                     if let Some(ref text) = effect.text {
-                        text_events.send(ShowTextEvent {
+                        text_events.write(ShowTextEvent {
                             text: text.clone(),
                             is_dialogue_prompt: false,
                         });
@@ -398,7 +398,7 @@ pub fn interaction_effect_system(
 
                 ReactionEffectType::DialoguePrompt => {
                     if let Some(ref prompt) = effect.prompt {
-                        text_events.send(ShowTextEvent {
+                        text_events.write(ShowTextEvent {
                             text: prompt.clone(),
                             is_dialogue_prompt: true,
                         });
@@ -547,10 +547,10 @@ impl Plugin for InteractionPlugin {
         app.init_resource::<GlobalFlags>()
             .init_resource::<EntityIdMap>()
             .init_resource::<SelectedInteraction>()
-            .add_event::<InteractionEvent>()
-            .add_event::<ShowTextEvent>()
-            .add_event::<PlaySoundEvent>()
-            .add_event::<PlayAnimationEvent>()
+            .add_message::<InteractionEvent>()
+            .add_message::<ShowTextEvent>()
+            .add_message::<PlaySoundEvent>()
+            .add_message::<PlayAnimationEvent>()
             .add_systems(Update, interaction_effect_system);
     }
 }

@@ -59,30 +59,44 @@ impl Plugin for NpcLookAtPlugin {
     }
 }
 
-/// Finds "head" named entities that are children of NPC entities with NpcLookAt,
-/// and marks them with NpcHeadBone + HeadLookAtOffset.
+/// Finds "head" named entities and walks up the Parent hierarchy to find which
+/// NPC (entity with NpcLookAt) they belong to, then marks them with NpcHeadBone.
 fn find_head_bones(
     mut commands: Commands,
-    npc_q: Query<Entity, With<NpcLookAt>>,
+    npc_q: Query<(), With<NpcLookAt>>,
     name_q: Query<(Entity, &Name), (Without<NpcHeadBone>, Without<NpcLookAt>)>,
+    parent_q: Query<&ChildOf>,
     existing_heads: Query<&NpcHeadBone>,
 ) {
-    for npc_entity in &npc_q {
-        // Check if we already have a head bone for this NPC
+    for (bone_entity, name) in &name_q {
+        if name.as_str() != "head" {
+            continue;
+        }
+
+        // Walk up the Parent chain to find the NPC root entity
+        let mut ancestor = bone_entity;
+        let npc_root = loop {
+            let Ok(parent) = parent_q.get(ancestor) else {
+                break None;
+            };
+            ancestor = parent.parent();
+            if npc_q.get(ancestor).is_ok() {
+                break Some(ancestor);
+            }
+        };
+
+        let Some(npc_entity) = npc_root else { continue };
+
+        // Skip if this NPC already has a head bone assigned
         let already_found = existing_heads.iter().any(|h| h.npc_root == npc_entity);
         if already_found {
             continue;
         }
 
-        // Search all named entities for "head" (lowercase — KayKit skeleton naming)
-        for (bone_entity, name) in &name_q {
-            if name.as_str() == "head" {
-                commands.entity(bone_entity).insert((
-                    NpcHeadBone { npc_root: npc_entity },
-                    HeadLookAtOffset { yaw: 0.0 },
-                ));
-            }
-        }
+        commands.entity(bone_entity).insert((
+            NpcHeadBone { npc_root: npc_entity },
+            HeadLookAtOffset { yaw: 0.0 },
+        ));
     }
 }
 

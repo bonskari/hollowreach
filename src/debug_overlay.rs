@@ -58,10 +58,10 @@ pub fn setup_debug_overlay(mut commands: Commands) {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(6.0)),
                 row_gap: Val::Px(2.0),
+                border_radius: BorderRadius::all(Val::Px(4.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-            BorderRadius::all(Val::Px(4.0)),
             Visibility::Hidden,
             GlobalZIndex(100),
         ))
@@ -128,7 +128,7 @@ pub fn update_debug_overlay(
         if let Some(fps_diag) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
         {
             if let Some(fps_val) = fps_diag.smoothed() {
-                let mut text = fps_q.single_mut();
+                let mut text = fps_q.single_mut().unwrap();
                 **text = format!("FPS: {:.0}", fps_val);
             }
         }
@@ -138,20 +138,20 @@ pub fn update_debug_overlay(
     // --- FPS ---
     if let Some(fps_diag) = diagnostics.get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS) {
         if let Some(fps_val) = fps_diag.smoothed() {
-            let mut text = fps_q.single_mut();
+            let mut text = fps_q.single_mut().unwrap();
             **text = format!("FPS: {:.0}", fps_val);
         }
     }
 
     // --- RAM from /proc/meminfo ---
     {
-        let mut text = ram_q.single_mut();
+        let mut text = ram_q.single_mut().unwrap();
         **text = read_ram_info();
     }
 
     // --- VRAM from nvidia-smi ---
     {
-        let mut text = vram_q.single_mut();
+        let mut text = vram_q.single_mut().unwrap();
         **text = read_vram_info();
     }
 }

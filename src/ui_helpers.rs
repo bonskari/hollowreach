@@ -4,6 +4,8 @@
 use bevy::prelude::*;
 use bevy::ui::widget::NodeImageMode;
 
+use bevy::ecs::hierarchy::ChildSpawnerCommands;
+
 // ---------------------------------------------------------------------------
 // Color constants
 // ---------------------------------------------------------------------------
@@ -51,7 +53,7 @@ pub fn setup_ui_assets(mut commands: Commands, asset_server: Res<AssetServer>) {
     );
     let divider_image = asset_server.load("ui/Divider Fade/divider-fade-003.png");
     let panel_slicer = TextureSlicer {
-        border: BorderRect::square(18.0),
+        border: BorderRect::all(18.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Tile { stretch_value: 3.0 },
         max_corner_scale: 2.0,
@@ -90,7 +92,7 @@ pub fn button_image_node(ui: &UiAssets) -> ImageNode {
 
 /// Spawns a standard button with label text. Returns the button entity.
 pub fn spawn_button<C: Component>(
-    parent: &mut ChildBuilder,
+    parent: &mut ChildSpawnerCommands,
     ui: &UiAssets,
     label: &str,
     marker: C,
@@ -121,7 +123,7 @@ pub fn spawn_button<C: Component>(
 }
 
 /// Spawns a divider image (fade line).
-pub fn spawn_divider(parent: &mut ChildBuilder, ui: &UiAssets) {
+pub fn spawn_divider(parent: &mut ChildSpawnerCommands, ui: &UiAssets) {
     parent.spawn((
         ImageNode::new(ui.divider_image.clone()),
         Node {

@@ -2,7 +2,7 @@
 //! While open: game is paused, cursor is visible.
 
 use bevy::prelude::*;
-use bevy::window::CursorGrabMode;
+use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::ui_helpers::{self, UiAssets};
 
 #[derive(Resource)]
@@ -100,7 +100,7 @@ fn toggle_pause(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
-    mut windows: Query<&mut Window>,
+    mut cursor_q: Query<&mut CursorOptions>,
     npc_panel_state: Res<crate::NpcPanelState>,
     prop_panel_state: Res<crate::PropPanelState>,
     text_input_state: Res<crate::text_input::TextInputState>,
@@ -112,17 +112,17 @@ fn toggle_pause(
         }
         pause.paused = !pause.paused;
 
-        let mut vis = overlay_q.single_mut();
-        let mut window = windows.single_mut();
+        let mut vis = overlay_q.single_mut().unwrap();
+        let mut cursor_opts = cursor_q.single_mut().unwrap();
 
         if pause.paused {
             *vis = Visibility::Visible;
-            window.cursor_options.grab_mode = CursorGrabMode::None;
-            window.cursor_options.visible = true;
+            cursor_opts.grab_mode = CursorGrabMode::None;
+            cursor_opts.visible = true;
         } else {
             *vis = Visibility::Hidden;
-            window.cursor_options.grab_mode = CursorGrabMode::Locked;
-            window.cursor_options.visible = false;
+            cursor_opts.grab_mode = CursorGrabMode::Locked;
+            cursor_opts.visible = false;
         }
     }
 }
@@ -131,8 +131,8 @@ fn pause_button_system(
     mut interaction_q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
     mut pause: ResMut<PauseState>,
     mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
-    mut windows: Query<&mut Window>,
-    mut exit: EventWriter<AppExit>,
+    mut cursor_q: Query<&mut CursorOptions>,
+    mut exit: MessageWriter<AppExit>,
     mut audio_settings: ResMut<crate::AudioSettings>,
 ) {
     for (interaction, button) in &mut interaction_q {
@@ -143,10 +143,10 @@ fn pause_button_system(
         match button.action {
             PauseAction::Resume => {
                 pause.paused = false;
-                *overlay_q.single_mut() = Visibility::Hidden;
-                let mut window = windows.single_mut();
-                window.cursor_options.grab_mode = CursorGrabMode::Locked;
-                window.cursor_options.visible = false;
+                *overlay_q.single_mut().unwrap() = Visibility::Hidden;
+                let mut cursor_opts = cursor_q.single_mut().unwrap();
+                cursor_opts.grab_mode = CursorGrabMode::Locked;
+                cursor_opts.visible = false;
             }
             PauseAction::Save => {
                 println!("Save not implemented yet");
@@ -161,7 +161,7 @@ fn pause_button_system(
                 }
             }
             PauseAction::Quit => {
-                exit.send(AppExit::Success);
+                exit.write(AppExit::Success);
             }
         }
     }

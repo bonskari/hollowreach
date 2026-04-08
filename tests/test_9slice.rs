@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy::ui::widget::NodeImageMode;
-use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
 
 #[derive(Resource)]
 struct Frame(usize);
@@ -10,7 +10,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "9-slice Test".into(),
-                resolution: (1280.0, 720.0).into(),
+                resolution: bevy::window::WindowResolution::new(1280, 720),
                 ..default()
             }),
             ..default()
@@ -21,14 +21,14 @@ fn main() {
         .run();
 }
 
-fn take_screenshot(mut frame: ResMut<Frame>, mut commands: Commands, mut exit: EventWriter<AppExit>) {
+fn take_screenshot(mut frame: ResMut<Frame>, mut commands: Commands, mut exit: MessageWriter<AppExit>) {
     frame.0 += 1;
     if frame.0 == 30 {
         commands.spawn(Screenshot::primary_window())
             .observe(save_to_disk("test_screenshots/9slice_test.png"));
     }
     if frame.0 == 45 {
-        exit.send(AppExit::Success);
+        exit.write(AppExit::Success);
     }
 }
 
@@ -37,7 +37,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     let panel = asset_server.load("ui/Panel/panel-012.png");
     let slicer = TextureSlicer {
-        border: BorderRect::square(18.0),
+        border: BorderRect::all(18.0),
         center_scale_mode: SliceScaleMode::Stretch,
         sides_scale_mode: SliceScaleMode::Tile { stretch_value: 3.0 },
         max_corner_scale: 1.0,
