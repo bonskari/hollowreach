@@ -104,7 +104,7 @@ pub fn spawn_button<C: Component>(
             button_image_node(ui),
             BackgroundColor(Color::NONE),
             Node {
-                width: Val::Px(220.0),
+                width: Val::Px(140.0),
                 height: Val::Px(38.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,

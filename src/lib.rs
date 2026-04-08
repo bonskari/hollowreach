@@ -327,6 +327,10 @@ pub struct NpcPanelName;
 #[derive(Component)]
 pub struct NpcPanelRole;
 
+/// Marker for the NPC greeting text inside the interaction panel.
+#[derive(Component)]
+pub struct NpcPanelGreeting;
+
 /// Button action in the NPC interaction panel.
 #[derive(Clone, Copy, PartialEq)]
 pub enum NpcPanelAction {
@@ -416,13 +420,6 @@ impl Default for DialogueTimer {
             active: false,
         }
     }
-}
-
-/// Event sent when an NPC interaction panel opens, to show a greeting in the dialogue box.
-#[derive(Message)]
-pub struct NpcGreetingEvent {
-    pub npc_name: String,
-    pub greeting: String,
 }
 
 // --- Reusable UI animation components ---
@@ -651,7 +648,6 @@ impl Plugin for HollowreachPlugin {
             .init_resource::<EntityConfigs>()
             .init_resource::<AreaConfigs>()
             .init_resource::<NpcPanelState>()
-            .add_message::<NpcGreetingEvent>()
             .init_resource::<EscapeConsumed>()
             .init_resource::<PropPanelState>()
             .add_systems(First, |mut esc: ResMut<EscapeConsumed>| { esc.0 = false; })
@@ -717,7 +713,6 @@ impl Plugin for HollowreachPlugin {
                 (
                     handle_say_event.run_if(pause_menu::game_not_paused),
                     show_text_event_system.run_if(pause_menu::game_not_paused),
-                    handle_npc_greeting.run_if(pause_menu::game_not_paused),
                     ui_helpers::button_hover_system,
                 ),
             )
@@ -1449,70 +1444,15 @@ pub fn setup_ui(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                         });
                 });
 
-            // --- NPC Interaction Panel ---
+            // --- NPC Interaction Panel (wide, bottom-aligned) ---
             parent
                 .spawn((
                     NpcInteractionPanel,
                     Node {
                         position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
-                        justify_content: JustifyContent::FlexStart,
-                        align_items: AlignItems::Center,
-                        padding: UiRect::top(Val::Percent(15.0)),
-                        ..default()
-                    },
-                    Visibility::Hidden,
-                    GlobalZIndex(100),
-                ))
-                .with_children(|overlay| {
-                    overlay
-                        .spawn((
-                            panel_image_node(&ui),
-                            Node {
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                padding: UiRect::axes(Val::Px(48.0), Val::Px(32.0)),
-                                min_width: Val::Px(280.0),
-                                max_width: Val::Px(340.0),
-                                ..default()
-                            },
-                        ))
-                        .with_children(|panel| {
-                            panel.spawn((
-                                NpcPanelName,
-                                Text::new("NPC Name"),
-                                TextFont { font_size: 24.0, ..default() },
-                                TextColor(COLOR_GOLD),
-                                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
-                            ));
-                            panel.spawn((
-                                NpcPanelRole,
-                                Text::new("Role"),
-                                TextFont { font_size: 16.0, ..default() },
-                                TextColor(COLOR_GREY),
-                                Node { margin: UiRect::bottom(Val::Px(8.0)), ..default() },
-                            ));
-                            spawn_divider(panel, &ui);
-
-                            for (label, action) in [
-                                ("Say", NpcPanelAction::Say),
-                                ("Give item", NpcPanelAction::GiveItem),
-                                ("Nevermind", NpcPanelAction::Nevermind),
-                            ] {
-                                spawn_button(panel, &ui, label, NpcPanelButton { action });
-                            }
-                        });
-                });
-
-            // --- Prop Interaction Panel ---
-            parent
-                .spawn((
-                    PropInteractionPanel,
-                    Node {
-                        position_type: PositionType::Absolute,
-                        width: Val::Percent(100.0),
-                        height: Val::Percent(100.0),
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        bottom: Val::Px(120.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -1527,34 +1467,122 @@ pub fn setup_ui(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                             Node {
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
-                                padding: UiRect::axes(Val::Px(48.0), Val::Px(32.0)),
-                                min_width: Val::Px(280.0),
-                                max_width: Val::Px(340.0),
+                                padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
                                 ..default()
                             },
                         ))
                         .with_children(|panel| {
+                            // Name + role on same row
+                            panel.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Baseline,
+                                column_gap: Val::Px(12.0),
+                                margin: UiRect::bottom(Val::Px(4.0)),
+                                ..default()
+                            }).with_children(|row| {
+                                row.spawn((
+                                    NpcPanelName,
+                                    Text::new("NPC Name"),
+                                    TextFont { font_size: 22.0, ..default() },
+                                    TextColor(COLOR_GOLD),
+                                ));
+                                row.spawn((
+                                    NpcPanelRole,
+                                    Text::new("Role"),
+                                    TextFont { font_size: 14.0, ..default() },
+                                    TextColor(COLOR_GREY),
+                                ));
+                            });
+
+                            // Greeting text
                             panel.spawn((
-                                PropPanelName,
-                                Text::new("Prop Name"),
-                                TextFont { font_size: 24.0, ..default() },
-                                TextColor(COLOR_GOLD),
-                                Node { margin: UiRect::bottom(Val::Px(4.0)), ..default() },
-                            ));
-                            panel.spawn((
-                                PropPanelSubtitle,
+                                NpcPanelGreeting,
                                 Text::new(""),
                                 TextFont { font_size: 16.0, ..default() },
-                                TextColor(COLOR_GREY),
+                                TextColor(COLOR_BODY),
                                 Node { margin: UiRect::bottom(Val::Px(8.0)), ..default() },
+                                TextLayout::new_with_justify(Justify::Center),
                             ));
+
                             spawn_divider(panel, &ui);
 
+                            // Buttons in a row
+                            panel.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::Center,
+                                column_gap: Val::Px(8.0),
+                                ..default()
+                            }).with_children(|row| {
+                                for (label, action) in [
+                                    ("Say", NpcPanelAction::Say),
+                                    ("Give Item", NpcPanelAction::GiveItem),
+                                    ("Nevermind", NpcPanelAction::Nevermind),
+                                ] {
+                                    spawn_button(row, &ui, label, NpcPanelButton { action });
+                                }
+                            });
+                        });
+                });
+
+            // --- Prop Interaction Panel (same wide layout as NPC panel) ---
+            parent
+                .spawn((
+                    PropInteractionPanel,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        bottom: Val::Px(120.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    Visibility::Hidden,
+                    GlobalZIndex(100),
+                ))
+                .with_children(|overlay| {
+                    overlay
+                        .spawn((
+                            panel_image_node(&ui),
+                            Node {
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(40.0), Val::Px(24.0)),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|panel| {
+                            // Name + subtitle on same row
+                            panel.spawn(Node {
+                                flex_direction: FlexDirection::Row,
+                                align_items: AlignItems::Baseline,
+                                column_gap: Val::Px(12.0),
+                                margin: UiRect::bottom(Val::Px(8.0)),
+                                ..default()
+                            }).with_children(|row| {
+                                row.spawn((
+                                    PropPanelName,
+                                    Text::new("Prop Name"),
+                                    TextFont { font_size: 22.0, ..default() },
+                                    TextColor(COLOR_GOLD),
+                                ));
+                                row.spawn((
+                                    PropPanelSubtitle,
+                                    Text::new(""),
+                                    TextFont { font_size: 14.0, ..default() },
+                                    TextColor(COLOR_GREY),
+                                ));
+                            });
+
+                            spawn_divider(panel, &ui);
+
+                            // Dynamic button container — buttons in a row
                             panel.spawn((
                                 PropPanelButtonContainer,
                                 Node {
-                                    flex_direction: FlexDirection::Column,
-                                    align_items: AlignItems::Center,
+                                    flex_direction: FlexDirection::Row,
+                                    justify_content: JustifyContent::Center,
+                                    column_gap: Val::Px(8.0),
                                     ..default()
                                 },
                             ));
@@ -1870,6 +1898,7 @@ pub fn interact_system(
         Query<&mut Text, With<NpcPanelRole>>,
         Query<&mut Text, With<PropPanelName>>,
         Query<&mut Text, With<PropPanelSubtitle>>,
+        Query<&mut Text, With<NpcPanelGreeting>>,
     )>,
     mut commands: Commands,
     global_flags: Res<interactions::GlobalFlags>,
@@ -1878,7 +1907,7 @@ pub fn interact_system(
     mut prop_panel_q: Query<&mut Visibility, (With<PropInteractionPanel>, Without<NpcInteractionPanel>)>,
     prop_btn_container_q: Query<Entity, With<PropPanelButtonContainer>>,
     ui_assets: Res<ui_helpers::UiAssets>,
-    mut cursor_and_events: (Query<&mut CursorOptions>, MessageWriter<NpcGreetingEvent>),
+    mut cursor_q: Query<&mut CursorOptions>,
 ) {
     let (ref mut npc_panel_state, ref mut prop_panel_state) = panel_state;
     cooldown.0.tick(time.delta());
@@ -1933,31 +1962,28 @@ pub fn interact_system(
         npc_panel_state.open = true;
         npc_panel_state.target_npc = Some(target_entity);
 
-        // Send greeting event based on personality traits
+        // Set greeting text in panel based on personality traits
         {
-            let greeting_name = opt_personality
-                .map(|p| p.name.clone())
-                .or_else(|| opt_interactable.map(|i| i.name.clone()))
-                .unwrap_or_else(|| "Unknown".to_string());
             let greeting = if let Some(personality) = opt_personality {
                 let traits_lower: Vec<String> = personality.traits.iter().map(|t| t.to_lowercase()).collect();
                 if traits_lower.iter().any(|t| t.contains("gruff") || t.contains("stern")) {
-                    "Hmm? What do you want?".to_string()
+                    "\"Hmm? What do you want?\""
                 } else if traits_lower.iter().any(|t| t.contains("friendly") || t.contains("warm")) {
-                    "Well met, traveler!".to_string()
+                    "\"Well met, traveler!\""
                 } else if traits_lower.iter().any(|t| t.contains("mysterious") || t.contains("quiet")) {
-                    "...".to_string()
+                    "\"...\""
                 } else {
-                    "Hello there.".to_string()
+                    "\"Hello there.\""
                 }
             } else {
-                "Hello there.".to_string()
+                "\"Hello there.\""
             };
-            cursor_and_events.1.write(NpcGreetingEvent { npc_name: greeting_name, greeting });
+            let mut q = text_queries.p4();
+            if let Ok(mut t) = q.single_mut() { **t = greeting.to_string(); }
         }
 
         // Show cursor
-        if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+        if let Ok(mut cursor_opts) = cursor_q.single_mut() {
             cursor_opts.grab_mode = CursorGrabMode::None;
             cursor_opts.visible = true;
         }
@@ -2030,7 +2056,7 @@ pub fn interact_system(
             prop_panel_state.available_interactions = available;
 
             // Show cursor
-            if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+            if let Ok(mut cursor_opts) = cursor_q.single_mut() {
                 cursor_opts.grab_mode = CursorGrabMode::None;
                 cursor_opts.visible = true;
             }
@@ -2084,7 +2110,7 @@ pub fn interact_system(
         prop_panel_state.available_interactions = vec![legacy_interaction];
 
         // Show cursor
-        if let Ok(mut cursor_opts) = cursor_and_events.0.single_mut() {
+        if let Ok(mut cursor_opts) = cursor_q.single_mut() {
             cursor_opts.grab_mode = CursorGrabMode::None;
             cursor_opts.visible = true;
         }
@@ -2343,35 +2369,6 @@ pub fn show_text_event_system(
 
         let mut text = dialogue_text_q.single_mut().unwrap();
         **text = event.text.clone();
-
-        let (box_entity, mut box_vis) = dialogue_box_q.single_mut().unwrap();
-        *box_vis = Visibility::Visible;
-        commands.entity(box_entity).insert(UiSlideIn {
-            elapsed: 0.0,
-            duration: 0.35,
-            start_offset: 80.0,
-        });
-
-        dialogue_timer.timer.reset();
-        dialogue_timer.active = true;
-    }
-}
-
-/// Handles NpcGreetingEvent — shows an NPC greeting in the dialogue box.
-pub fn handle_npc_greeting(
-    mut events: MessageReader<NpcGreetingEvent>,
-    mut dialogue_text_q: Query<&mut Text, With<DialogueText>>,
-    mut dialogue_name_q: Query<&mut Text, (With<DialogueNameText>, Without<DialogueText>)>,
-    mut dialogue_box_q: Query<(Entity, &mut Visibility), With<DialogueBox>>,
-    mut dialogue_timer: ResMut<DialogueTimer>,
-    mut commands: Commands,
-) {
-    for event in events.read() {
-        let mut name_text = dialogue_name_q.single_mut().unwrap();
-        **name_text = event.npc_name.clone();
-
-        let mut text = dialogue_text_q.single_mut().unwrap();
-        **text = event.greeting.clone();
 
         let (box_entity, mut box_vis) = dialogue_box_q.single_mut().unwrap();
         *box_vis = Visibility::Visible;
