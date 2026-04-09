@@ -449,6 +449,13 @@ pub struct UiSlideIn {
     pub start_offset: f32,
 }
 
+/// Horizontal scale-in animation: width scales from 0% to 100%.
+#[derive(Component)]
+pub struct UiScaleIn {
+    pub elapsed: f32,
+    pub duration: f32,
+}
+
 /// Cinematic intro screen — "This is" then "Hollowreach" with fade in/out.
 #[derive(Resource)]
 pub struct IntroSequence {
@@ -725,6 +732,7 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(tts::TtsPlugin)
             .add_plugins(interactions::InteractionPlugin)
             .add_plugins(context::ContextAreaPlugin)
+            .add_systems(Update, (panel_appear_animation_system, ui_scale_in_system))
             .add_systems(Startup, spawn_context_areas.after(load_entity_configs))
             .add_systems(Startup, populate_entity_id_map.after(spawn_from_configs));
     }
@@ -2649,6 +2657,48 @@ pub fn ui_slide_in_system(
         };
         let offset = slide.start_offset * (1.0 - bounce);
         node.bottom = Val::Px(30.0 - offset);
+    }
+}
+
+/// Horizontal scale-in: animates width from 0% to auto via max_width clamping.
+/// Uses an ease-out curve for snappy appearance.
+pub fn ui_scale_in_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut UiScaleIn, &mut Node)>,
+) {
+    for (entity, mut scale, mut node) in &mut query {
+        scale.elapsed += time.delta_secs();
+        let t = (scale.elapsed / scale.duration).clamp(0.0, 1.0);
+        // Ease-out: fast start, smooth end
+        let eased = 1.0 - (1.0 - t) * (1.0 - t);
+        // Scale width from 0 to 100%
+        node.width = Val::Percent(eased * 100.0);
+        if t >= 1.0 {
+            node.width = Val::Auto;
+            commands.entity(entity).remove::<UiScaleIn>();
+        }
+    }
+}
+
+/// Watches for panels becoming visible, adds scale-in animation to first child.
+pub fn panel_appear_animation_system(
+    mut commands: Commands,
+    panels: Query<(&Visibility, &Children), Or<(
+        (With<NpcInteractionPanel>, Changed<Visibility>),
+        (With<PropInteractionPanel>, Changed<Visibility>),
+        (With<pause_menu::PauseOverlay>, Changed<Visibility>),
+    )>>,
+) {
+    for (vis, children) in &panels {
+        if *vis == Visibility::Visible {
+            if let Some(panel_entity) = children.iter().next() {
+                commands.entity(panel_entity).insert(UiScaleIn {
+                    elapsed: 0.0,
+                    duration: 0.15,
+                });
+            }
+        }
     }
 }
 
