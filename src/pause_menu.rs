@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::ui_helpers::{self, UiAssets};
+use crate::DismissPanel;
 
 #[derive(Resource)]
 pub struct PauseState {
@@ -40,8 +41,7 @@ impl Plugin for PauseMenuPlugin {
             .add_systems(Startup, setup_pause_menu.after(ui_helpers::setup_ui_assets))
             .add_systems(Update, (
                 toggle_pause
-                    .after(crate::npc_panel_close_system)
-                    .after(crate::prop_panel_close_system),
+                    .after(crate::panel::panel_close_system),
                 pause_button_system,
             ));
     }
@@ -51,6 +51,7 @@ fn setup_pause_menu(mut commands: Commands, ui: Res<UiAssets>) {
     commands
         .spawn((
             PauseOverlay,
+            ui_helpers::AnimatedPanel,
             Node {
                 position_type: PositionType::Absolute,
                 width: Val::Percent(100.0),
@@ -99,28 +100,31 @@ fn setup_pause_menu(mut commands: Commands, ui: Res<UiAssets>) {
 fn toggle_pause(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut pause: ResMut<PauseState>,
-    mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
+    overlay_q: Query<Entity, With<PauseOverlay>>,
     mut cursor_q: Query<&mut CursorOptions>,
-    npc_panel_state: Res<crate::NpcPanelState>,
-    prop_panel_state: Res<crate::PropPanelState>,
+    panel_state: Res<crate::panel::PanelState>,
     text_input_state: Res<crate::text_input::TextInputState>,
     esc_consumed: Res<crate::EscapeConsumed>,
+    mut commands: Commands,
 ) {
     if keyboard.just_pressed(KeyCode::Escape) {
-        if npc_panel_state.open || prop_panel_state.open || text_input_state.active || esc_consumed.0 {
+        if panel_state.visual != crate::panel::PanelVisual::Hidden || text_input_state.active || esc_consumed.0 {
             return;
         }
         pause.paused = !pause.paused;
 
-        let mut vis = overlay_q.single_mut().unwrap();
         let mut cursor_opts = cursor_q.single_mut().unwrap();
 
         if pause.paused {
-            *vis = Visibility::Visible;
+            if let Ok(entity) = overlay_q.single() {
+                commands.entity(entity).insert(Visibility::Visible);
+            }
             cursor_opts.grab_mode = CursorGrabMode::None;
             cursor_opts.visible = true;
         } else {
-            *vis = Visibility::Hidden;
+            if let Ok(entity) = overlay_q.single() {
+                commands.entity(entity).insert(DismissPanel);
+            }
             cursor_opts.grab_mode = CursorGrabMode::Locked;
             cursor_opts.visible = false;
         }
@@ -130,10 +134,11 @@ fn toggle_pause(
 fn pause_button_system(
     mut interaction_q: Query<(&Interaction, &PauseButton), Changed<Interaction>>,
     mut pause: ResMut<PauseState>,
-    mut overlay_q: Query<&mut Visibility, With<PauseOverlay>>,
+    overlay_q: Query<Entity, With<PauseOverlay>>,
     mut cursor_q: Query<&mut CursorOptions>,
     mut exit: MessageWriter<AppExit>,
     mut audio_settings: ResMut<crate::AudioSettings>,
+    mut commands: Commands,
 ) {
     for (interaction, button) in &mut interaction_q {
         if *interaction != Interaction::Pressed {
@@ -143,7 +148,9 @@ fn pause_button_system(
         match button.action {
             PauseAction::Resume => {
                 pause.paused = false;
-                *overlay_q.single_mut().unwrap() = Visibility::Hidden;
+                if let Ok(entity) = overlay_q.single() {
+                    commands.entity(entity).insert(DismissPanel);
+                }
                 let mut cursor_opts = cursor_q.single_mut().unwrap();
                 cursor_opts.grab_mode = CursorGrabMode::Locked;
                 cursor_opts.visible = false;

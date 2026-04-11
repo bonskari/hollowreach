@@ -7,8 +7,6 @@
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::prelude::*;
-use bevy::window::{CursorGrabMode, CursorOptions};
-use crate::ui_helpers::{self, UiAssets};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -67,10 +65,6 @@ impl Default for CursorBlinkTimer {
 // Components
 // ---------------------------------------------------------------------------
 
-/// Marker for the text input box container (dark panel at bottom).
-#[derive(Component)]
-pub struct TextInputBox;
-
 /// Marker for the text display inside the input box.
 #[derive(Component)]
 pub struct TextInputDisplay;
@@ -82,122 +76,6 @@ pub struct TextInputCursor;
 /// Marker for the "Say to <NPC>" label above the input.
 #[derive(Component)]
 pub struct TextInputLabel;
-
-// ---------------------------------------------------------------------------
-// Setup system
-// ---------------------------------------------------------------------------
-
-/// Creates the text input UI — a dark panel at the bottom of the screen,
-/// styled to match the existing dialogue box (Kenney Fantasy UI borders).
-/// Hidden by default; shown when the player selects "Say" on an NPC.
-pub fn setup_text_input_ui(mut commands: Commands, ui: Res<UiAssets>) {
-    // Root container — anchored to bottom center, hidden by default
-    commands
-        .spawn((
-            TextInputBox,
-            Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(30.0),
-                left: Val::Percent(15.0),
-                right: Val::Percent(15.0),
-                flex_direction: FlexDirection::Column,
-                ..default()
-            },
-            Visibility::Hidden,
-            GlobalZIndex(50),
-        ))
-        .with_children(|box_parent| {
-            // Panel with content
-            box_parent
-                .spawn((
-                    ui_helpers::panel_image_node(&ui),
-                    Node {
-                        padding: UiRect::axes(Val::Px(24.0), Val::Px(16.0)),
-                        flex_direction: FlexDirection::Column,
-                        ..default()
-                    },
-                ))
-                .with_children(|content| {
-                    // "Say to <NPC name>" label
-                    content.spawn((
-                        TextInputLabel,
-                        Text::new("Say to ..."),
-                        TextFont {
-                            font_size: 18.0,
-                            ..default()
-                        },
-                        TextColor(ui_helpers::COLOR_GOLD),
-                    ));
-
-                    // Spacer
-                    content.spawn(Node {
-                        height: Val::Px(8.0),
-                        ..default()
-                    });
-
-                    // Input area — row with typed text + blinking cursor
-                    content
-                        .spawn((Node {
-                            flex_direction: FlexDirection::Row,
-                            align_items: AlignItems::Center,
-                            min_height: Val::Px(28.0),
-                            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
-                            ..default()
-                        },
-                        BackgroundColor(Color::srgba(0.04, 0.03, 0.08, 0.7)),
-                        ))
-                        .with_children(|input_row| {
-                            // "> " prompt
-                            input_row.spawn((
-                                Text::new("> "),
-                                TextFont {
-                                    font_size: 17.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgb(0.6, 0.55, 0.45)),
-                            ));
-
-                            // Typed text
-                            input_row.spawn((
-                                TextInputDisplay,
-                                Text::new(""),
-                                TextFont {
-                                    font_size: 17.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
-                            ));
-
-                            // Blinking cursor (a thin "|")
-                            input_row.spawn((
-                                TextInputCursor,
-                                Text::new("|"),
-                                TextFont {
-                                    font_size: 17.0,
-                                    ..default()
-                                },
-                                TextColor(Color::srgba(0.95, 0.82, 0.4, 1.0)),
-                            ));
-                        });
-
-                    // Spacer
-                    content.spawn(Node {
-                        height: Val::Px(6.0),
-                        ..default()
-                    });
-
-                    // Hint text: "[Enter] Send  [Esc] Cancel"
-                    content.spawn((
-                        Text::new("[Enter] Send    [Esc] Cancel"),
-                        TextFont {
-                            font_size: 13.0,
-                            ..default()
-                        },
-                        TextColor(Color::srgba(0.6, 0.58, 0.5, 0.7)),
-                    ));
-                });
-        });
-}
 
 // ---------------------------------------------------------------------------
 // Activation helpers
@@ -230,29 +108,14 @@ pub fn text_input_system(
     mut keyboard_events: MessageReader<KeyboardInput>,
     keyboard: Res<ButtonInput<KeyCode>>,
     mut display_q: Query<&mut Text, With<TextInputDisplay>>,
-    mut box_q: Query<&mut Visibility, With<TextInputBox>>,
     mut label_q: Query<&mut Text, (With<TextInputLabel>, Without<TextInputDisplay>)>,
-    mut cursor_q: Query<&mut CursorOptions>,
     mut blink_timer: ResMut<CursorBlinkTimer>,
     mut commands: Commands,
+    mut panel_commands: MessageWriter<crate::panel::PanelCommand>,
+    mut esc_consumed: ResMut<crate::EscapeConsumed>,
 ) {
-    // Show/hide the input box based on state
-    if let Ok(mut box_vis) = box_q.single_mut() {
-        *box_vis = if state.active {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
-        };
-    }
-
     if !state.active {
         return;
-    }
-
-    // Unlock cursor while typing
-    if let Ok(mut cursor_opts) = cursor_q.single_mut() {
-        cursor_opts.grab_mode = CursorGrabMode::None;
-        cursor_opts.visible = true;
     }
 
     // Process keyboard events
@@ -278,12 +141,9 @@ pub fn text_input_system(
                     commands.entity(npc).remove::<crate::npc_ai::NpcInteracting>();
                 }
                 deactivate_text_input(&mut state);
-
-                // Re-lock cursor for gameplay
-                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
-                    cursor_opts.grab_mode = CursorGrabMode::Locked;
-                    cursor_opts.visible = false;
-                }
+                panel_commands.write(crate::panel::PanelCommand {
+                    action: crate::panel::PanelAction::Close,
+                });
 
                 // Reset blink timer
                 blink_timer.timer.reset();
@@ -296,12 +156,10 @@ pub fn text_input_system(
                     commands.entity(npc).remove::<crate::npc_ai::NpcInteracting>();
                 }
                 deactivate_text_input(&mut state);
-
-                // Re-lock cursor for gameplay
-                if let Ok(mut cursor_opts) = cursor_q.single_mut() {
-                    cursor_opts.grab_mode = CursorGrabMode::Locked;
-                    cursor_opts.visible = false;
-                }
+                esc_consumed.0 = true;
+                panel_commands.write(crate::panel::PanelCommand {
+                    action: crate::panel::PanelAction::Close,
+                });
 
                 // Reset blink timer
                 blink_timer.timer.reset();
@@ -472,7 +330,6 @@ impl Plugin for TextInputPlugin {
         app.init_resource::<TextInputState>()
             .init_resource::<CursorBlinkTimer>()
             .add_message::<SayEvent>()
-            .add_systems(Startup, setup_text_input_ui.after(ui_helpers::setup_ui_assets))
             .add_systems(
                 Update,
                 (

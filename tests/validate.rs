@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
 use hollowreach::*;
 use hollowreach::text_input::TextInputState;
+use hollowreach::panel::{PanelState, PanelVisual, InteractionPanel};
 
 #[derive(Resource)]
 struct Frame(usize);
@@ -14,11 +15,8 @@ fn validate_system(
     mut keyboard: ResMut<ButtonInput<KeyCode>>,
     mut exit: MessageWriter<AppExit>,
     hint_q: Query<&Visibility, With<ProximityHintText>>,
-    panel_q: Query<&Visibility, (With<InteractionListPanel>, Without<ProximityHintText>, Without<NpcInteractionPanel>)>,
-    _npc_panel_q: Query<&Visibility, (With<NpcInteractionPanel>, Without<ProximityHintText>, Without<InteractionListPanel>)>,
-    dialogue_timer: Res<DialogueTimer>,
+    panel_state: Res<PanelState>,
     text_input_state: Res<TextInputState>,
-    npc_panel_state: Res<NpcPanelState>,
 ) {
     frame.0 += 1;
 
@@ -90,10 +88,9 @@ fn validate_system(
             mouse_events.write(bevy::input::mouse::MouseMotion { delta: Vec2::new(-400.0, -100.0) });
         }
         220 => {
-            // Verify the interaction list panel is showing for multi-interaction NPC
+            // Verify the interaction panel state
             let hint_vis = hint_q.single().unwrap();
-            let panel_vis = panel_q.single().unwrap();
-            println!("[DEBUG] frame=220: hint={:?}, panel={:?}", *hint_vis, *panel_vis);
+            println!("[DEBUG] frame=220: hint={:?}, panel_open={:?}", *hint_vis, panel_state.visual != PanelVisual::Hidden);
 
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_07_proximity_hint.png"));
@@ -109,27 +106,20 @@ fn validate_system(
 
         // Verify NPC panel opened (NPC path opens panel, not dialogue)
         240 => {
-            println!("[DEBUG] frame=240: npc_panel_open={}, dialogue_active={}, text_input_active={}",
-                npc_panel_state.open, dialogue_timer.active, text_input_state.active);
+            println!("[DEBUG] frame=240: panel_visual={:?}, text_input_active={}",
+                panel_state.visual, text_input_state.active);
 
-            // When NPC panel is open OR dialogue/text_input is active,
-            // the proximity hint and interaction list panel MUST be hidden
-            let any_overlay_active = npc_panel_state.open || dialogue_timer.active || text_input_state.active;
+            // When panel is showing OR text_input is active,
+            // the proximity hint MUST be hidden
+            let any_overlay_active = panel_state.visual != PanelVisual::Hidden || text_input_state.active;
 
             if any_overlay_active {
                 let hint_vis = hint_q.single().unwrap();
                 assert_eq!(
                     *hint_vis, Visibility::Hidden,
-                    "BUG: Proximity hint visible while NPC panel/dialogue/text input is active!"
+                    "BUG: Proximity hint visible while panel/text input is active!"
                 );
-                println!("[PASS] Hint correctly hidden during NPC panel/dialogue/text input");
-
-                let panel_vis = panel_q.single().unwrap();
-                assert_eq!(
-                    *panel_vis, Visibility::Hidden,
-                    "BUG: Interaction list panel visible while NPC panel/dialogue/text input is active!"
-                );
-                println!("[PASS] Interaction list panel correctly hidden during NPC panel/dialogue/text input");
+                println!("[PASS] Hint correctly hidden during panel/text input");
             } else {
                 println!("[WARN] No overlay active at frame 240 - interaction may not have fired");
             }
@@ -148,8 +138,8 @@ fn validate_system(
 
         // Wait, then check state after closing
         290 => {
-            println!("[DEBUG] frame=290: npc_panel_open={}, dialogue_active={}, text_input_active={}",
-                npc_panel_state.open, dialogue_timer.active, text_input_state.active);
+            println!("[DEBUG] frame=290: panel_visual={:?}, text_input_active={}",
+                panel_state.visual, text_input_state.active);
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_09_after_close.png"));
         }
@@ -157,9 +147,8 @@ fn validate_system(
         // After everything closes, verify panel returns near NPC
         300 => {
             let hint_vis = hint_q.single().unwrap();
-            let panel_vis = panel_q.single().unwrap();
-            println!("[INFO] frame=300: hint={:?}, list_panel={:?}, npc_panel_open={}",
-                *hint_vis, *panel_vis, npc_panel_state.open);
+            println!("[INFO] frame=300: hint={:?}, panel_visual={:?}",
+                *hint_vis, panel_state.visual);
             commands.spawn(Screenshot::primary_window())
                 .observe(save_to_disk("test_screenshots/v_10_after_fade.png"));
         }
@@ -195,6 +184,6 @@ fn main() {
             .before(hollowreach::player_movement)
             .before(hollowreach::player_look)
             .before(hollowreach::interact_system)
-            .before(hollowreach::npc_panel_close_system))
+            .before(hollowreach::panel::panel_close_system))
         .run();
 }

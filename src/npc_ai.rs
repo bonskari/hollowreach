@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 
 use crate::{
     npc_look_at::NpcLookAt, pause_menu, static_collision_aabbs, AnimationSources, CircleCollider,
-    DialogueText, DialogueTimer, Interactable, Player,
+    Interactable, Player,
 };
 
 // ---------------------------------------------------------------------------
@@ -341,8 +341,7 @@ pub fn npc_decision_system(
 }
 
 /// Execute the current action.  For `Speak` actions the text is shown via
-/// the existing `DialogueText` / `DialogueTimer` mechanism.  Movement is
-/// delegated to `npc_pathfinding_system`.
+/// the panel system's dialogue content.
 pub fn npc_execute_system(
     mut npcs: Query<
         (
@@ -355,8 +354,7 @@ pub fn npc_execute_system(
         ),
         With<NpcBrain>,
     >,
-    mut dialogue_text: Query<&mut Text, With<DialogueText>>,
-    mut dialogue_timer: ResMut<DialogueTimer>,
+    mut panel_commands: MessageWriter<crate::panel::PanelCommand>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
 ) {
     for (_entity, mut state, npc_tf, interactable, mut look_at, is_interacting) in &mut npcs {
@@ -378,15 +376,16 @@ pub fn npc_execute_system(
                     }
                 }
 
-                // Display dialogue using existing UI.
+                // Display dialogue using panel system.
                 let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
                 let full = format!("{speaker}: \"{text}\"");
 
-                if let Ok(mut dt) = dialogue_text.single_mut() {
-                    **dt = full;
-                }
-                dialogue_timer.timer.reset();
-                dialogue_timer.active = true;
+                panel_commands.write(crate::panel::PanelCommand {
+                    action: crate::panel::PanelAction::Open(crate::panel::PanelContent::Dialogue {
+                        speaker: speaker.to_string(),
+                        text: full,
+                    }),
+                });
 
                 // Speak is instant — clear action.
                 state.current_action = None;

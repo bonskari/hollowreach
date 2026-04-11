@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Run Hollowreach",
+            "type": "shell",
+            "command": "cargo run --bin hollowreach",
+            "problemMatcher": ["$rustc"],
+            "group": "build"
+        },
+        {
+            "label": "Build Hollowreach",
+            "type": "shell",
+            "command": "cargo build --bin hollowreach",
+            "problemMatcher": ["$rustc"],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

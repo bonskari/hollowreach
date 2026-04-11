@@ -1,0 +1,40 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Run Hollowreach",
+            "cargo": {
+                "args": ["build", "--bin=hollowreach"],
+                "filter": {
+                    "name": "hollowreach",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "/home/b1s/dev/github/hollowreach",
+            "env": {
+                "BEVY_ASSET_ROOT": "/home/b1s/dev/github/hollowreach"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Hollowreach",
+            "cargo": {
+                "args": ["build", "--bin=hollowreach"],
+                "filter": {
+                    "name": "hollowreach",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "/home/b1s/dev/github/hollowreach",
+            "env": {
+                "BEVY_ASSET_ROOT": "/home/b1s/dev/github/hollowreach"
+            },
+            "sourceLanguages": ["rust"]
+        }
+    ]
+}

@@ -92,7 +92,7 @@ fn test_system(
     mut camera_q: Query<(&mut PlayerCamera, &GlobalTransform)>,
     _interactable_q: Query<(&Transform, &Interactable), Without<Player>>,
     cooldown: Option<Res<InteractionCooldown>>,
-    ui_dialogue_q: Query<Entity, With<DialogueText>>,
+    ui_panel_q: Query<Entity, With<hollowreach::panel::InteractionPanel>>,
     ui_hint_q: Query<Entity, With<ProximityHintText>>,
     window_q: Query<&Window>,
     cursor_options_q: Query<&CursorOptions>,
@@ -405,10 +405,10 @@ fn test_system(
             }
             if frame >= 3 {
                 // Check for UI components
-                let has_dialogue = ui_dialogue_q.iter().count() > 0;
+                let has_panel = ui_panel_q.iter().count() > 0;
                 let has_hint = ui_hint_q.iter().count() > 0;
-                runner.check("has_onscreen_ui", has_dialogue || has_hint, "No UI nodes found");
-                runner.check("has_interaction_feedback_ui", has_dialogue, "No DialogueText entity found");
+                runner.check("has_onscreen_ui", has_panel || has_hint, "No UI nodes found");
+                runner.check("has_interaction_feedback_ui", has_panel, "No InteractionPanel entity found");
                 runner.check("has_proximity_hint_ui", has_hint, "No ProximityHintText entity found");
                 runner.next_phase();
             }
@@ -776,8 +776,7 @@ fn main() {
                 .before(hollowreach::player_collision)
                 .before(hollowreach::player_look)
                 .before(hollowreach::interact_system)
-                .before(hollowreach::proximity_hint_system)
-                .before(hollowreach::dialogue_fade_system),
+                .before(hollowreach::proximity_hint_system),
         )
         .run();
 }
