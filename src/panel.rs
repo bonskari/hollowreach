@@ -85,6 +85,12 @@ pub fn panel_not_open(state: Res<PanelState>) -> bool {
     matches!(state.content, PanelContent::None)
 }
 
+/// Run condition: true when the current panel content should not block gameplay.
+/// Read-only dialogue does not lock player movement/look/interact.
+pub fn panel_not_blocking_gameplay(state: Res<PanelState>) -> bool {
+    matches!(state.content, PanelContent::None | PanelContent::Dialogue { .. })
+}
+
 // ---------------------------------------------------------------------------
 // Commands (events)
 // ---------------------------------------------------------------------------

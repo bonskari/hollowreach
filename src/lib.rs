@@ -574,27 +574,27 @@ impl Plugin for HollowreachPlugin {
                     player_movement
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(panel::panel_not_open),
+                        .run_if(panel::panel_not_blocking_gameplay),
                     player_collision
                         .after(player_movement)
                         .run_if(pause_menu::game_not_paused),
                     player_look
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(panel::panel_not_open),
+                        .run_if(panel::panel_not_blocking_gameplay),
                     interact_system
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(panel::panel_not_open),
+                        .run_if(panel::panel_not_blocking_gameplay),
                     proximity_hint_system.run_if(pause_menu::game_not_paused),
                     interaction_scroll_system
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(panel::panel_not_open),
+                        .run_if(panel::panel_not_blocking_gameplay),
                     footstep_sound_system
                         .run_if(pause_menu::game_not_paused)
                         .run_if(text_input::text_input_not_active)
-                        .run_if(panel::panel_not_open),
+                        .run_if(panel::panel_not_blocking_gameplay),
                     start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
                     ui_slide_in_system.run_if(pause_menu::game_not_paused),
