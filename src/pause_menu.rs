@@ -43,7 +43,7 @@ impl Plugin for PauseMenuPlugin {
                 toggle_pause
                     .after(crate::panel::panel_close_system),
                 pause_button_system,
-            ));
+            ).run_if(in_state(crate::GameState::Playing)));
     }
 }
 

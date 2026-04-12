@@ -9,14 +9,6 @@ license = "MIT"
 bevy = { version = "0.18", features = ["jpeg", "wav"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-llama-cpp-2 = "0.1"
-encoding_rs = "0.8"
-crossbeam-channel = "0.5"
-ort = { version = "2.0.0-rc.12", features = ["half", "cuda"] }
-tokenizers = "0.21"
-ndarray = "0.16"
-half = { version = "2.3", features = ["num-traits"] }
-rand = "0.8"
 
 
 [[test]]
@@ -40,7 +32,3 @@ name = "test_9slice"
 path = "tests/test_9slice.rs"
 harness = false
 
-[[test]]
-name = "test_tts"
-path = "tests/test_tts.rs"
-harness = false

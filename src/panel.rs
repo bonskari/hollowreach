@@ -662,7 +662,7 @@ impl Plugin for PanelPlugin {
                     panel_dialogue_timer_system,
                     panel_command_system,
                     panel_transition_system,
-                ),
+                ).run_if(in_state(crate::GameState::Playing)),
             );
     }
 }

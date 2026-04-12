@@ -23,11 +23,14 @@ _original_generate = None
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    send({"status": "loading", "device": device})
+    send({"status": "loading", "message": "Starting voice engine...", "progress": 0.0})
 
     try:
+        send({"status": "loading", "message": "Loading speech model...", "progress": 0.2})
         from chatterbox.tts import ChatterboxTTS
+        send({"status": "loading", "message": "Loading model weights...", "progress": 0.4})
         model = ChatterboxTTS.from_pretrained(device=device)
+        send({"status": "loading", "message": "Voice engine ready", "progress": 1.0})
     except Exception as e:
         send({"status": "error", "error": str(e)})
         return

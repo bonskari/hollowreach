@@ -51,11 +51,8 @@ pub struct NpcLookAtPlugin;
 impl Plugin for NpcLookAtPlugin {
     fn build(&self, app: &mut App) {
         // find_head_bones and clear_distant_targets run in Update (fine, no ordering issue)
-        app.add_systems(Update, (find_head_bones, clear_distant_targets));
-
-        // The look-at system MUST run in PostUpdate, after Bevy's animation
-        // systems have finished writing bone transforms.
-        app.add_systems(PostUpdate, npc_look_at_system);
+        app.add_systems(Update, (find_head_bones, clear_distant_targets).run_if(in_state(crate::GameState::Playing)));
+        app.add_systems(PostUpdate, npc_look_at_system.run_if(in_state(crate::GameState::Playing)));
     }
 }
 

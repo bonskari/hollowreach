@@ -7,7 +7,8 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 // ---------------------------------------------------------------------------
 // Data types
@@ -50,6 +51,10 @@ struct WorkerResponse {
     error: Option<String>,
     #[serde(default)]
     device: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    progress: Option<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -58,15 +63,19 @@ struct WorkerResponse {
 
 /// Resource that manages the persistent Chatterbox Python subprocess.
 #[derive(Resource)]
+/// Loading progress info from the worker.
+pub struct LoadingStatus {
+    pub message: String,
+    pub progress: f32,
+}
+
+#[derive(Resource)]
 pub struct TtsEngine {
-    /// Channel sender for requests to the background thread.
     request_tx: mpsc::Sender<(String, String, String, Entity)>,
-    /// Channel receiver for completed responses (wrapped in Mutex for Sync).
     response_rx: Mutex<mpsc::Receiver<TtsResponse>>,
-    /// Counter for generating unique filenames.
+    loading_rx: Mutex<mpsc::Receiver<LoadingStatus>>,
     next_id: u64,
-    /// Whether the engine is ready (model loaded).
-    pub ready: bool,
+    pub ready: Arc<AtomicBool>,
 }
 
 impl TtsEngine {
@@ -74,17 +83,20 @@ impl TtsEngine {
     pub fn new() -> Self {
         let (request_tx, request_rx) = mpsc::channel::<(String, String, String, Entity)>();
         let (response_tx, response_rx) = mpsc::channel::<TtsResponse>();
+        let (loading_tx, loading_rx) = mpsc::channel::<LoadingStatus>();
+        let ready = Arc::new(AtomicBool::new(false));
+        let ready_clone = ready.clone();
 
-        // Spawn background thread that manages the Python process
         std::thread::spawn(move || {
-            Self::worker_thread(request_rx, response_tx);
+            Self::worker_thread(request_rx, response_tx, ready_clone, loading_tx);
         });
 
         Self {
             request_tx,
             response_rx: Mutex::new(response_rx),
+            loading_rx: Mutex::new(loading_rx),
             next_id: 0,
-            ready: false,
+            ready,
         }
     }
 
@@ -98,15 +110,20 @@ impl TtsEngine {
         }
     }
 
-    /// Poll for completed TTS responses (non-blocking).
     pub fn poll(&self) -> Option<TtsResponse> {
         self.response_rx.lock().ok()?.try_recv().ok()
+    }
+
+    pub fn poll_loading(&self) -> Option<LoadingStatus> {
+        self.loading_rx.lock().ok()?.try_recv().ok()
     }
 
     /// Background thread that owns the Python subprocess.
     fn worker_thread(
         request_rx: mpsc::Receiver<(String, String, String, Entity)>,
         response_tx: mpsc::Sender<TtsResponse>,
+        ready_flag: Arc<AtomicBool>,
+        loading_tx: mpsc::Sender<LoadingStatus>,
     ) {
         // Determine the path to the worker script
         // Look for tts_worker.py in scripts/ or next to executable
@@ -172,7 +189,17 @@ impl TtsEngine {
                 Ok(_) => {
                     if let Ok(resp) = serde_json::from_str::<WorkerResponse>(&line) {
                         info!("TTS worker status: {} (device: {:?})", resp.status, resp.device);
+                        if resp.status == "loading" {
+                            let _ = loading_tx.send(LoadingStatus {
+                                message: resp.message.unwrap_or_else(|| "Loading...".into()),
+                                progress: resp.progress.unwrap_or(0.0),
+                            });
+                        }
                         if resp.status == "ready" {
+                            let _ = loading_tx.send(LoadingStatus {
+                                message: "Ready".into(),
+                                progress: 1.0,
+                            });
                             break;
                         }
                         if resp.status == "error" {
@@ -188,6 +215,7 @@ impl TtsEngine {
             }
         }
 
+        ready_flag.store(true, Ordering::SeqCst);
         info!("TTS: worker ready, processing requests");
 
         // Process requests
@@ -325,45 +353,114 @@ fn tts_poll_system(
 // Plugin
 // ---------------------------------------------------------------------------
 
-/// Marker for the "Loading voices..." UI text.
+/// Marker for the loading screen overlay.
 #[derive(Component)]
-struct TtsLoadingText;
+struct TtsLoadingScreen;
+
+/// Marker for the loading status text.
+#[derive(Component)]
+struct TtsLoadingStatusText;
+
+/// Marker for the progress bar fill.
+#[derive(Component)]
+struct TtsProgressBar;
 
 fn tts_loading_ui(mut commands: Commands) {
-    commands.spawn((
-        TtsLoadingText,
-        Text::new("Loading voices..."),
-        TextFont { font_size: 18.0, ..default() },
-        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.8)),
-        Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(16.0),
-            left: Val::Px(16.0),
-            ..default()
-        },
-    ));
+    commands
+        .spawn((
+            TtsLoadingScreen,
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(16.0),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.0, 0.0, 0.0)),
+            GlobalZIndex(500),
+        ))
+        .with_children(|parent| {
+            // Status text
+            parent.spawn((
+                TtsLoadingStatusText,
+                Text::new("Starting..."),
+                TextFont { font_size: 16.0, ..default() },
+                TextColor(Color::srgba(0.7, 0.7, 0.7, 0.9)),
+            ));
+
+            // Progress bar background
+            parent
+                .spawn((
+                    Node {
+                        width: Val::Px(300.0),
+                        height: Val::Px(6.0),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.3, 0.3, 0.3, 0.5)),
+                ))
+                .with_children(|bar_bg| {
+                    // Progress bar fill
+                    bar_bg.spawn((
+                        TtsProgressBar,
+                        Node {
+                            width: Val::Percent(0.0),
+                            height: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.95, 0.82, 0.4)),
+                    ));
+                });
+        });
 }
 
-fn tts_loading_ui_hide(
+fn tts_loading_ui_update(
     mut commands: Commands,
     engine: Option<Res<TtsEngine>>,
-    query: Query<Entity, With<TtsLoadingText>>,
+    screen_q: Query<Entity, With<TtsLoadingScreen>>,
+    mut text_q: Query<&mut Text, With<TtsLoadingStatusText>>,
+    mut bar_q: Query<&mut Node, With<TtsProgressBar>>,
+    mut next_state: ResMut<NextState<crate::GameState>>,
 ) {
-    if let Some(engine) = engine {
-        if engine.ready {
-            for entity in &query {
-                commands.entity(entity).despawn();
-            }
+    let Some(engine) = engine else { return };
+
+    while let Some(status) = engine.poll_loading() {
+        if let Ok(mut text) = text_q.single_mut() {
+            **text = status.message;
+        }
+        if let Ok(mut node) = bar_q.single_mut() {
+            node.width = Val::Percent(status.progress * 100.0);
         }
     }
+
+    if engine.ready.load(Ordering::SeqCst) {
+        for entity in &screen_q {
+            commands.entity(entity).despawn();
+        }
+        next_state.set(crate::GameState::Playing);
+    }
+}
+
+/// Run condition: true only when TTS engine is loaded and ready.
+pub fn tts_ready(engine: Option<Res<TtsEngine>>) -> bool {
+    engine.is_some_and(|e| e.ready.load(Ordering::SeqCst))
 }
 
 pub struct TtsPlugin;
 
 impl Plugin for TtsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_message::<TtsRequest>()
-            .add_systems(Startup, (tts_startup, tts_loading_ui))
-            .add_systems(Update, (tts_request_system, tts_poll_system, tts_loading_ui_hide).chain());
+        // Start worker immediately during plugin build (before any Bevy systems run)
+        let _ = std::fs::create_dir_all("/tmp/hollowreach_tts");
+        let engine = TtsEngine::new();
+        app.insert_resource(engine)
+            .add_message::<TtsRequest>()
+            .add_systems(Startup, tts_loading_ui)
+            .add_systems(Update, (tts_request_system, tts_poll_system).chain())
+            .add_systems(Update, tts_loading_ui_update);
     }
 }

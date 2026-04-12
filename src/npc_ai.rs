@@ -162,6 +162,7 @@ impl Plugin for NpcAiPlugin {
         app.init_resource::<NpcTurnQueue>().add_systems(
             Update,
             (
+                // All NPC AI only in Playing state
                 npc_queue_init_system,
                 npc_anim_graph_init_system,
                 npc_decision_system
@@ -177,7 +178,7 @@ impl Plugin for NpcAiPlugin {
                     .after(npc_execute_system)
                     .after(npc_anim_graph_init_system)
                     .run_if(pause_menu::game_not_paused),
-            ),
+            ).run_if(in_state(crate::GameState::Playing)),
         );
     }
 }

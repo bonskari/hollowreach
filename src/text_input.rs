@@ -335,7 +335,7 @@ impl Plugin for TextInputPlugin {
                 (
                     text_input_system,
                     cursor_blink_system,
-                ),
+                ).run_if(in_state(crate::GameState::Playing)),
             );
     }
 }

@@ -361,6 +361,15 @@ pub struct DismissPanel;
 
 /// Cinematic intro screen — "This is" then "Hollowreach" with fade in/out.
 #[derive(Resource)]
+#[derive(States, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GameState {
+    #[default]
+    Loading,
+    Menu,
+    Playing,
+}
+
+#[derive(Resource)]
 pub struct IntroSequence {
     pub elapsed: f32,
     pub active: bool,
@@ -547,7 +556,8 @@ pub struct HollowreachPlugin;
 
 impl Plugin for HollowreachPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<AudioSettings>()
+        app.init_state::<GameState>()
+            .init_resource::<AudioSettings>()
             .init_resource::<MouseSensitivity>()
             .init_resource::<InteractionCooldown>()
             .init_resource::<AnimationSources>()
@@ -568,6 +578,7 @@ impl Plugin for HollowreachPlugin {
                 load_footstep_audio,
             ).chain())
             .add_systems(Startup, spawn_from_configs.after(load_entity_configs).after(setup_scene))
+            // All gameplay systems only run in Playing state
             .add_systems(
                 Update,
                 (
@@ -597,20 +608,20 @@ impl Plugin for HollowreachPlugin {
                         .run_if(panel::panel_not_blocking_gameplay),
                     start_npc_animations.run_if(pause_menu::game_not_paused),
                     hide_unwanted_meshes,
-                    ui_slide_in_system.run_if(pause_menu::game_not_paused),
-                    ui_fade_in_system.run_if(pause_menu::game_not_paused),
-                    ui_fade_out_system.run_if(pause_menu::game_not_paused),
-                    intro_system.run_if(pause_menu::game_not_paused),
-                    intro_sfx_system.run_if(pause_menu::game_not_paused),
-                ),
+                ).run_if(in_state(GameState::Playing)),
             )
             .add_systems(
                 Update,
                 (
+                    ui_slide_in_system,
+                    ui_fade_in_system,
+                    ui_fade_out_system,
+                    intro_system.run_if(pause_menu::game_not_paused),
+                    intro_sfx_system.run_if(pause_menu::game_not_paused),
                     handle_say_event.run_if(pause_menu::game_not_paused),
                     show_text_event_system.run_if(pause_menu::game_not_paused),
                     ui_helpers::button_hover_system,
-                ),
+                ).run_if(in_state(GameState::Playing)),
             )
             .add_plugins(debug_overlay::DebugOverlayPlugin)
             .add_plugins(inventory::InventoryPlugin)
