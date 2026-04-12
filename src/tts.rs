@@ -109,24 +109,37 @@ impl TtsEngine {
         response_tx: mpsc::Sender<TtsResponse>,
     ) {
         // Determine the path to the worker script
-        let worker_script = if std::path::Path::new("assets/scripts/tts_worker.py").exists() {
-            "assets/scripts/tts_worker.py".to_string()
-        } else {
-            // Fallback: look relative to the executable
-            let exe_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-            if let Some(dir) = exe_dir {
-                dir.join("assets/scripts/tts_worker.py")
-                    .to_string_lossy()
-                    .to_string()
-            } else {
+        // Look for tts_worker.py in scripts/ or next to executable
+        let worker_script = ["scripts/tts_worker.py", "tts_worker.py"]
+            .iter()
+            .find(|p| std::path::Path::new(p).exists())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                std::env::current_exe().ok()
+                    .and_then(|p| p.parent().map(|d| d.join("tts_worker.py")))
+                    .filter(|p| p.exists())
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| {
                 error!("Could not find tts_worker.py");
-                return;
-            }
-        };
+                "scripts/tts_worker.py".to_string()
+            });
 
-        let python_bin = "/home/b1s/chatterbox-venv/bin/python3";
+        // Try venv python first, fall back to system python3
+        let python_bin = [
+            std::env::var("HOLLOWREACH_PYTHON").ok(),
+            Some("chatterbox-venv/bin/python3".to_string()),
+            dirs().map(|d| format!("{}/chatterbox-venv/bin/python3", d)),
+            Some("python3".to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap_or_else(|| "python3".to_string());
+
+        fn dirs() -> Option<String> {
+            std::env::var("HOME").ok()
+        }
 
         info!("TTS: spawning worker subprocess: {} {}", python_bin, worker_script);
 

@@ -90,15 +90,16 @@ fn test_system(
     mut mouse_events: MessageWriter<bevy::input::mouse::MouseMotion>,
     mut player_q: Query<&mut Transform, With<Player>>,
     mut camera_q: Query<(&mut PlayerCamera, &GlobalTransform)>,
-    _interactable_q: Query<(&Transform, &Interactable), Without<Player>>,
     cooldown: Option<Res<InteractionCooldown>>,
     ui_panel_q: Query<Entity, With<hollowreach::panel::InteractionPanel>>,
     ui_hint_q: Query<Entity, With<ProximityHintText>>,
-    window_q: Query<&Window>,
     cursor_options_q: Query<&CursorOptions>,
     mut exit: MessageWriter<AppExit>,
     mut pause_state: ResMut<hollowreach::pause_menu::PauseState>,
     mut pause_overlay_q: Query<&mut Visibility, With<hollowreach::pause_menu::PauseOverlay>>,
+    mut text_input_state: ResMut<hollowreach::text_input::TextInputState>,
+    npc_q: Query<(Entity, &NpcPersonality)>,
+    mut say_events: MessageWriter<hollowreach::text_input::SayEvent>,
 ) {
     runner.frame_in_phase += 1;
     let phase = runner.phase;
@@ -573,7 +574,6 @@ fn test_system(
             }
             if frame >= 15 {
                 // Check that double-escape returns to original state
-                let _w = window_q.single().unwrap();
                 let cursor_opts = cursor_options_q.single().unwrap();
                 // We don't know the current state for sure, but verify it's consistent
                 let locked = cursor_opts.grab_mode == CursorGrabMode::Locked;
@@ -720,14 +720,121 @@ fn test_system(
             }
         }
 
-        // ---- Phase 22: Wait for screenshots to save ----
+        // ============================================================
+        // NPC DIALOGUE / SAY TEST
+        // ============================================================
+
+        // ---- Phase 22: Teleport player to face Grok, open NPC panel ----
         22 => {
+            if frame == 1 {
+                println!("\n[18] NPC dialogue: Say flow");
+                // Ensure not paused
+                pause_state.paused = false;
+                if let Ok(mut vis) = pause_overlay_q.single_mut() { *vis = Visibility::Hidden; }
+                // Teleport player near Grok (who is at 2.0, 0.0, 0.5)
+                let mut tf = player_q.single_mut().unwrap();
+                tf.translation = Vec3::new(2.0, 1.0, 2.5);
+                tf.rotation = Quat::IDENTITY; // face -Z toward Grok
+                if let Ok((mut cam, _)) = camera_q.single_mut() {
+                    cam.yaw = 0.0;
+                    cam.pitch = -0.2;
+                }
+            }
+            // Wait a few frames for scene to settle
+            if frame == 10 {
+                // Press E to open NPC panel
+                keyboard.press(KeyCode::KeyE);
+            }
+            if frame == 12 {
+                keyboard.release(KeyCode::KeyE);
+            }
+            if frame == 17 {
+                screenshot(&mut commands, "21_npc_panel_open");
+            }
+            if frame >= 20 {
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 23: Activate text input (simulate Say button click) ----
+        23 => {
+            if frame == 1 {
+                // Find Grok's entity
+                let mut found_grok = false;
+                for (entity, personality) in npc_q.iter() {
+                    if personality.name == "Grok" {
+                        println!("  Found Grok entity: {:?}", entity);
+                        // Simulate what the "Say" button does:
+                        // activate_text_input sets active=true, clears text, sets target_npc
+                        hollowreach::text_input::activate_text_input(&mut text_input_state, entity);
+                        // Now set the text as if the player typed "Hello Grok"
+                        text_input_state.current_text = "Hello Grok".to_string();
+                        found_grok = true;
+                        break;
+                    }
+                }
+                runner.check(
+                    "found_grok_npc",
+                    found_grok,
+                    "Could not find NPC with name 'Grok'",
+                );
+                runner.check(
+                    "text_input_activated",
+                    text_input_state.active,
+                    "TextInputState not active after activate_text_input",
+                );
+                runner.check(
+                    "text_input_has_target",
+                    text_input_state.target_npc.is_some(),
+                    "TextInputState has no target NPC",
+                );
+            }
+            if frame == 3 {
+                screenshot(&mut commands, "22_text_input_active");
+            }
+            if frame >= 5 {
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 24: Submit SayEvent (simulate Enter press) ----
+        24 => {
+            if frame == 1 {
+                // Fire the SayEvent directly (the text_input_system would do this on Enter)
+                if let Some(npc_entity) = text_input_state.target_npc {
+                    let text = text_input_state.current_text.clone();
+                    println!("  Submitting SayEvent: '{}' to {:?}", text, npc_entity);
+                    say_events.write(hollowreach::text_input::SayEvent {
+                        npc: npc_entity,
+                        text,
+                    });
+                    // Deactivate text input (normally done by text_input_system on Enter)
+                    hollowreach::text_input::deactivate_text_input(&mut text_input_state);
+                    runner.pass("say_event_fired");
+                } else {
+                    runner.fail("say_event_fired", "No target NPC in TextInputState");
+                }
+            }
+            if frame == 5 {
+                screenshot(&mut commands, "23_after_say");
+            }
+            // Wait for any TTS/dialogue processing
+            if frame == 35 {
+                screenshot(&mut commands, "24_tts_response");
+            }
+            if frame >= 40 {
+                runner.next_phase();
+            }
+        }
+
+        // ---- Phase 25: Wait for screenshots to save ----
+        25 => {
             if frame >= 15 {
                 runner.next_phase();
             }
         }
 
-        // ---- Phase 23: Exit ----
+        // ---- Phase 26: Exit ----
         _ => {
             runner.report();
             let success = runner.all_passed();
