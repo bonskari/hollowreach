@@ -325,12 +325,45 @@ fn tts_poll_system(
 // Plugin
 // ---------------------------------------------------------------------------
 
+/// Marker for the "Loading voices..." UI text.
+#[derive(Component)]
+struct TtsLoadingText;
+
+fn tts_loading_ui(mut commands: Commands) {
+    commands.spawn((
+        TtsLoadingText,
+        Text::new("Loading voices..."),
+        TextFont { font_size: 18.0, ..default() },
+        TextColor(Color::srgba(0.7, 0.7, 0.7, 0.8)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(16.0),
+            left: Val::Px(16.0),
+            ..default()
+        },
+    ));
+}
+
+fn tts_loading_ui_hide(
+    mut commands: Commands,
+    engine: Option<Res<TtsEngine>>,
+    query: Query<Entity, With<TtsLoadingText>>,
+) {
+    if let Some(engine) = engine {
+        if engine.ready {
+            for entity in &query {
+                commands.entity(entity).despawn();
+            }
+        }
+    }
+}
+
 pub struct TtsPlugin;
 
 impl Plugin for TtsPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<TtsRequest>()
-            .add_systems(Startup, tts_startup)
-            .add_systems(Update, (tts_request_system, tts_poll_system).chain());
+            .add_systems(Startup, (tts_startup, tts_loading_ui))
+            .add_systems(Update, (tts_request_system, tts_poll_system, tts_loading_ui_hide).chain());
     }
 }

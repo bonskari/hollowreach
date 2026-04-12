@@ -1554,6 +1554,7 @@ pub fn interact_system(
     mut commands: Commands,
     global_flags: Res<interactions::GlobalFlags>,
     mut panel_commands: MessageWriter<panel::PanelCommand>,
+    mut tts_requests: MessageWriter<tts::TtsRequest>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -1610,6 +1611,19 @@ pub fn interact_system(
         } else {
             "\"Hello there.\""
         };
+
+        // Send TTS request for greeting
+        let voice = opt_personality
+            .map(|p| p.voice_profile.clone())
+            .unwrap_or_default();
+        if !voice.is_empty() {
+            let clean_greeting = greeting.trim_matches('"').to_string();
+            tts_requests.write(tts::TtsRequest {
+                text: clean_greeting,
+                voice_profile: voice,
+                npc_entity: target_entity,
+            });
+        }
 
         panel_commands.write(panel::PanelCommand {
             action: panel::PanelAction::Open(panel::PanelContent::NpcMenu {

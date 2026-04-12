@@ -32,8 +32,9 @@ def main():
         send({"status": "error", "error": str(e)})
         return
 
-    # Cache loaded voice references
+    # Cache loaded voice references and conditionals
     voice_cache = {}
+    conds_cache = {}
 
     send({"status": "ready", "device": device})
 
@@ -65,8 +66,15 @@ def main():
                 if ref_path:
                     audio_prompt = ref_path
 
-            # Generate speech
-            wav = model.generate(text, audio_prompt_path=audio_prompt)
+            # Use cached conditionals if available
+            if voice_profile in conds_cache:
+                model.conds = conds_cache[voice_profile]
+                wav = model.generate(text)
+            elif audio_prompt:
+                wav = model.generate(text, audio_prompt_path=audio_prompt)
+                conds_cache[voice_profile] = model.conds
+            else:
+                wav = model.generate(text)
 
             # Ensure output directory exists
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
