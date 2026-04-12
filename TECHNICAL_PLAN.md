@@ -223,9 +223,10 @@ Update (each frame):
 
 ### 3.1 Runtime
 
-- **llama.cpp** via `llama-cpp-rs` Rust bindings
+- **llama.cpp** via `llama-cpp-2` Rust crate (Vulkan GPU acceleration)
 - Runs **in-process**, no external server
-- GGUF model (~1.8 GB Q4 3B) bundled in `assets/models/`
+- Model: **Gemma 4 2B IT Q4_K_M** (~2.9 GB) bundled in `assets/models/`
+- GPU only — no CPU fallback. 8 GB VRAM minimum required.
 - Async: game sends prompt via channel, LLM processes on background thread, result comes back
 
 ### 3.2 NPC Decision Prompt Structure
@@ -424,16 +425,19 @@ KayKit animations available: Idle, Walk, Run, Sit (if available), Wave, Interact
 
 | Tier | RAM | VRAM | Notes |
 |------|-----|------|-------|
-| Minimum | 8 GB | 4 GB | LLM on CPU, TTS on CPU (slower) |
-| Recommended | 16 GB | 8 GB | LLM on GPU, TTS on GPU |
-| Optimal | 32 GB | 16 GB | Everything on GPU, fast responses |
+| Minimum | 16 GB | 8 GB | All AI on GPU, no CPU fallback |
+| Recommended | 16 GB | 12 GB | Comfortable headroom |
+| Optimal | 32 GB | 16 GB | Fast responses, large context |
 
-Budget breakdown (recommended tier):
-- Game + Bevy: ~1 GB RAM
-- LLM (3B Q4 GGUF): ~1.8 GB (GPU VRAM or RAM)
-- Chatterbox TTS: ~3 GB VRAM
-- Assets: ~500 MB
-- Total: ~6.3 GB
+**8 GB VRAM is the hard minimum.** The game will not start on systems below this.
+
+VRAM budget (8 GB minimum tier):
+- Game + Bevy renderer: ~2 GB
+- Gemma 4 2B Q4_K_M (full GPU offload): ~3 GB
+- Chatterbox TTS: ~3 GB
+- **Total: ~8 GB**
+
+No CPU fallback for LLM or TTS. Everything runs on GPU.
 
 ---
 

@@ -14,6 +14,7 @@ pub mod context;
 pub mod debug_overlay;
 pub mod interactions;
 pub mod inventory;
+pub mod llm;
 pub mod npc_ai;
 pub mod npc_look_at;
 pub mod panel;
@@ -619,6 +620,7 @@ impl Plugin for HollowreachPlugin {
                     intro_system.run_if(pause_menu::game_not_paused),
                     intro_sfx_system.run_if(pause_menu::game_not_paused),
                     handle_say_event.run_if(pause_menu::game_not_paused),
+                    llm_dialogue_poll_system.run_if(pause_menu::game_not_paused),
                     show_text_event_system.run_if(pause_menu::game_not_paused),
                     ui_helpers::button_hover_system,
                 ).run_if(in_state(GameState::Playing)),
@@ -630,6 +632,7 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(pause_menu::PauseMenuPlugin)
             .add_plugins(npc_look_at::NpcLookAtPlugin)
             .add_plugins(tts::TtsPlugin)
+            .add_plugins(llm::LlmPlugin)
             .add_plugins(interactions::InteractionPlugin)
             .add_plugins(context::ContextAreaPlugin)
             .add_plugins(panel::PanelPlugin)
@@ -1566,6 +1569,7 @@ pub fn interact_system(
     global_flags: Res<interactions::GlobalFlags>,
     mut panel_commands: MessageWriter<panel::PanelCommand>,
     mut tts_requests: MessageWriter<tts::TtsRequest>,
+    llm_engine: Option<Res<llm::LlmEngine>>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -1595,7 +1599,7 @@ pub fn interact_system(
     let is_npc = opt_interactable.is_some_and(|i| i.is_npc) || opt_personality.is_some();
     if is_npc {
         // Stop NPC movement and make them look at player
-        commands.entity(target_entity).insert(npc_ai::NpcInteracting);
+        commands.entity(target_entity).insert((npc_ai::NpcInteracting, npc_ai::NpcActivated));
         if let Ok(mut look_at) = look_at_q.get_mut(target_entity) {
             look_at.target = Some(player_entity);
         }
@@ -1608,32 +1612,28 @@ pub fn interact_system(
             .map(|p| p.role.clone())
             .unwrap_or_default();
 
-        let greeting = if let Some(personality) = opt_personality {
-            let traits_lower: Vec<String> = personality.traits.iter().map(|t| t.to_lowercase()).collect();
-            if traits_lower.iter().any(|t| t.contains("gruff") || t.contains("stern")) {
-                "\"Hmm? What do you want?\""
-            } else if traits_lower.iter().any(|t| t.contains("friendly") || t.contains("warm")) {
-                "\"Well met, traveler!\""
-            } else if traits_lower.iter().any(|t| t.contains("mysterious") || t.contains("quiet")) {
-                "\"...\""
-            } else {
-                "\"Hello there.\""
+        // Request LLM greeting — will appear when ready
+        let greeting = "...";
+        if let Some(ref engine) = llm_engine {
+            if let Some(personality) = opt_personality {
+                let npc_ctx = llm::NpcContext {
+                    name: personality.name.clone(),
+                    role: personality.role.clone(),
+                    traits: personality.traits.clone(),
+                    backstory: personality.backstory.clone(),
+                    speech_style: personality.speech_style.clone(),
+                    knowledge: personality.knowledge.clone(),
+                    goals: personality.goals.clone(),
+                    likes: personality.likes.clone(),
+                    dislikes: personality.dislikes.clone(),
+                };
+                engine.request_dialogue(llm::DialogueRequest {
+                    npc: npc_ctx,
+                    player_text: "The player approaches you and wants to talk.".into(),
+                    history: vec![],
+                    npc_entity: target_entity,
+                });
             }
-        } else {
-            "\"Hello there.\""
-        };
-
-        // Send TTS request for greeting
-        let voice = opt_personality
-            .map(|p| p.voice_profile.clone())
-            .unwrap_or_default();
-        if !voice.is_empty() {
-            let clean_greeting = greeting.trim_matches('"').to_string();
-            tts_requests.write(tts::TtsRequest {
-                text: clean_greeting,
-                voice_profile: voice,
-                npc_entity: target_entity,
-            });
         }
 
         panel_commands.write(panel::PanelCommand {
@@ -1735,18 +1735,100 @@ pub fn interact_system(
     }
 }
 
-/// Handles SayEvent — displays "You said: ..." via the panel system.
+/// Handles SayEvent — sends player text to LLM for NPC response.
 pub fn handle_say_event(
     mut say_events: MessageReader<text_input::SayEvent>,
     mut panel_commands: MessageWriter<panel::PanelCommand>,
+    llm_engine: Option<Res<llm::LlmEngine>>,
+    personality_q: Query<&NpcPersonality>,
 ) {
     for event in say_events.read() {
+        // Show the player's text immediately
         panel_commands.write(panel::PanelCommand {
             action: panel::PanelAction::Open(panel::PanelContent::Dialogue {
                 speaker: "You".to_string(),
                 text: event.text.clone(),
             }),
         });
+
+        // Send to LLM for NPC response
+        if let Some(ref engine) = llm_engine {
+            let npc_ctx = if let Ok(p) = personality_q.get(event.npc) {
+                llm::NpcContext {
+                    name: p.name.clone(),
+                    role: p.role.clone(),
+                    traits: p.traits.clone(),
+                    backstory: p.backstory.clone(),
+                    speech_style: p.speech_style.clone(),
+                    knowledge: p.knowledge.clone(),
+                    goals: p.goals.clone(),
+                    likes: p.likes.clone(),
+                    dislikes: p.dislikes.clone(),
+                }
+            } else {
+                llm::NpcContext {
+                    name: "NPC".into(),
+                    role: "Villager".into(),
+                    traits: vec![],
+                    backstory: String::new(),
+                    speech_style: String::new(),
+                    knowledge: vec![],
+                    goals: vec![],
+                    likes: vec![],
+                    dislikes: vec![],
+                }
+            };
+
+            engine.request_dialogue(llm::DialogueRequest {
+                npc: npc_ctx,
+                player_text: event.text.clone(),
+                history: vec![],
+                npc_entity: event.npc,
+            });
+        }
+    }
+}
+
+/// Polls LLM for dialogue responses and shows them + triggers TTS.
+pub fn llm_dialogue_poll_system(
+    llm_engine: Option<Res<llm::LlmEngine>>,
+    mut panel_commands: MessageWriter<panel::PanelCommand>,
+    mut tts_events: MessageWriter<tts::TtsRequest>,
+    personality_q: Query<&NpcPersonality>,
+) {
+    let Some(engine) = llm_engine else { return };
+
+    while let Some(response) = engine.poll_dialogue() {
+        if response.text.is_empty() {
+            continue;
+        }
+
+        let speaker = personality_q
+            .get(response.npc_entity)
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|_| "NPC".into());
+
+        let voice = personality_q
+            .get(response.npc_entity)
+            .map(|p| p.voice_profile.clone())
+            .unwrap_or_default();
+
+        // Show in dialogue panel
+        panel_commands.write(panel::PanelCommand {
+            action: panel::PanelAction::Open(panel::PanelContent::Dialogue {
+                speaker: speaker.clone(),
+                text: response.text.clone(),
+            }),
+        });
+
+        // Trigger TTS
+        if !voice.is_empty() {
+            tts_events.write(tts::TtsRequest {
+                text: response.text,
+                voice_profile: voice,
+                npc_entity: response.npc_entity,
+            });
+        }
     }
 }
 

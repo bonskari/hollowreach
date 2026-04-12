@@ -420,24 +420,46 @@ fn tts_loading_ui(mut commands: Commands) {
 
 fn tts_loading_ui_update(
     mut commands: Commands,
-    engine: Option<Res<TtsEngine>>,
+    tts_engine: Option<Res<TtsEngine>>,
+    llm_engine: Option<Res<crate::llm::LlmEngine>>,
     screen_q: Query<Entity, With<TtsLoadingScreen>>,
     mut text_q: Query<&mut Text, With<TtsLoadingStatusText>>,
     mut bar_q: Query<&mut Node, With<TtsProgressBar>>,
     mut next_state: ResMut<NextState<crate::GameState>>,
 ) {
-    let Some(engine) = engine else { return };
-
-    while let Some(status) = engine.poll_loading() {
-        if let Ok(mut text) = text_q.single_mut() {
-            **text = status.message;
-        }
-        if let Ok(mut node) = bar_q.single_mut() {
-            node.width = Val::Percent(status.progress * 100.0);
+    // Poll TTS loading
+    if let Some(ref engine) = tts_engine {
+        while let Some(status) = engine.poll_loading() {
+            if let Ok(mut text) = text_q.single_mut() {
+                **text = status.message;
+            }
+            if let Ok(mut node) = bar_q.single_mut() {
+                node.width = Val::Percent(status.progress * 50.0); // TTS is 0-50%
+            }
         }
     }
 
-    if engine.ready.load(Ordering::SeqCst) {
+    // Poll LLM loading
+    if let Some(ref engine) = llm_engine {
+        while let Some(status) = engine.poll_loading() {
+            if let Ok(mut text) = text_q.single_mut() {
+                **text = status.message;
+            }
+            if let Ok(mut node) = bar_q.single_mut() {
+                node.width = Val::Percent(50.0 + status.progress * 50.0); // LLM is 50-100%
+            }
+        }
+    }
+
+    // Transition to Playing only when BOTH engines are ready
+    let tts_ready = tts_engine
+        .as_ref()
+        .is_some_and(|e| e.ready.load(Ordering::SeqCst));
+    let llm_ready = llm_engine
+        .as_ref()
+        .is_some_and(|e| e.ready.load(Ordering::SeqCst));
+
+    if tts_ready && llm_ready {
         for entity in &screen_q {
             commands.entity(entity).despawn();
         }

@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 
 use crate::{
-    npc_look_at::NpcLookAt, pause_menu, static_collision_aabbs, AnimationSources, CircleCollider,
-    Interactable, Player,
+    llm, npc_look_at::NpcLookAt, pause_menu, static_collision_aabbs, AnimationSources,
+    CircleCollider, Interactable, NpcPersonality, Player,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,8 +54,6 @@ pub struct NpcDecisionState {
     pub current_action: Option<NpcAction>,
     /// Hash of the last context snapshot — used for dirty detection.
     pub last_context_hash: u64,
-    /// Cooldown between decision ticks.
-    pub cooldown: Timer,
 }
 
 impl Default for NpcDecisionState {
@@ -63,7 +61,6 @@ impl Default for NpcDecisionState {
         Self {
             current_action: None,
             last_context_hash: 0,
-            cooldown: Timer::from_seconds(3.0, TimerMode::Once),
         }
     }
 }
@@ -72,6 +69,15 @@ impl Default for NpcDecisionState {
 /// Removed when the interaction panel closes.
 #[derive(Component)]
 pub struct NpcInteracting;
+
+/// Marker: this NPC has been activated by player interaction.
+/// NPCs stay idle until the player interacts with them for the first time.
+#[derive(Component)]
+pub struct NpcActivated;
+
+/// Marker: this NPC has a pending LLM decision request.
+#[derive(Component)]
+pub struct NpcPendingDecision;
 
 /// Walk speed for NPC movement (units per second).
 #[derive(Component)]
@@ -138,17 +144,6 @@ impl NpcTurnQueue {
     }
 }
 
-/// Placeholder dialogue lines NPCs can randomly choose from.
-const NPC_IDLE_LINES: &[&str] = &[
-    "Hmm, quiet today...",
-    "I wonder what lies beyond these walls.",
-    "Something doesn't feel right.",
-    "The shadows grow longer each evening.",
-    "I could use a drink.",
-    "These old stones hold many secrets.",
-    "Did you hear that?",
-    "Best stay alert.",
-];
 
 // ---------------------------------------------------------------------------
 // Plugin
@@ -168,8 +163,11 @@ impl Plugin for NpcAiPlugin {
                 npc_decision_system
                     .after(npc_queue_init_system)
                     .run_if(pause_menu::game_not_paused),
-                npc_execute_system
+                npc_decision_poll_system
                     .after(npc_decision_system)
+                    .run_if(pause_menu::game_not_paused),
+                npc_execute_system
+                    .after(npc_decision_poll_system)
                     .run_if(pause_menu::game_not_paused),
                 npc_pathfinding_system
                     .after(npc_execute_system)
@@ -256,16 +254,19 @@ fn build_context_hash(
 }
 
 /// Core decision system.  On each frame, ticks cooldowns and, when the
-/// current NPC is idle and its cooldown expired, generates a new action.
-///
-/// Current logic is placeholder random — will be replaced by LLM queries.
+/// current NPC is idle and its cooldown expired, sends an LLM decision request.
 pub fn npc_decision_system(
-    time: Res<Time>,
+    mut commands: Commands,
     mut queue: ResMut<NpcTurnQueue>,
-    mut npcs: Query<(Entity, &Transform, &mut NpcDecisionState, Has<NpcInteracting>), With<NpcBrain>>,
+    mut npcs: Query<
+        (Entity, &Transform, &mut NpcDecisionState, Has<NpcInteracting>, Has<NpcPendingDecision>, Has<NpcActivated>),
+        With<NpcBrain>,
+    >,
     others: Query<(Entity, &Transform, Option<&Interactable>), Without<Player>>,
     player_query: Query<&Transform, With<Player>>,
     interactable_query: Query<(Entity, &Interactable, &Transform)>,
+    personality_q: Query<&NpcPersonality>,
+    llm_engine: Option<Res<llm::LlmEngine>>,
 ) {
     if queue.queue.is_empty() {
         return;
@@ -275,70 +276,149 @@ pub fn npc_decision_system(
         return;
     };
 
-    // Tick cooldown for the current NPC.
-    let Ok((npc_entity, npc_tf, mut state, is_interacting)) = npcs.get_mut(current_entity) else {
-        // Entity may have despawned — remove and advance.
+    let Ok((npc_entity, npc_tf, mut state, is_interacting, has_pending, is_activated)) =
+        npcs.get_mut(current_entity)
+    else {
         queue.remove(current_entity);
         return;
     };
 
-    // Player is interacting — skip this NPC's turn
-    if is_interacting {
+    if is_interacting || has_pending || !is_activated {
         queue.advance();
         return;
     }
 
-    state.cooldown.tick(time.delta());
-
-    // Only decide when idle and cooldown finished.
-    if state.current_action.is_some() || !state.cooldown.is_finished() {
-        return;
-    }
-
-    // --- Context dirty check ---
+    // Hash check: if context changed, interrupt current action for a new decision
     let ctx_hash = build_context_hash(npc_entity, npc_tf, &others, &player_query);
-    if ctx_hash == state.last_context_hash {
-        // Nothing changed — stay idle, advance turn.
+    let context_changed = ctx_hash != state.last_context_hash;
+
+    if state.current_action.is_some() && !context_changed {
+        // Busy and nothing changed — keep doing current action
         queue.advance();
-        state.cooldown.reset();
         return;
+    }
+
+    // Either idle (needs new action) or context changed (re-evaluate)
+    if context_changed {
+        state.current_action = None; // Cancel current action if context changed
     }
     state.last_context_hash = ctx_hash;
 
-    // --- Placeholder random decision ---
-    // Deterministic-ish seed from entity + frame so behaviour varies.
-    let seed = npc_entity
-        .to_bits()
-        .wrapping_add((time.elapsed_secs() * 100.0) as u64);
-    let roll = seed % 100;
+    // --- Send LLM decision request ---
+    if let Some(ref engine) = llm_engine {
+        if engine.ready.load(std::sync::atomic::Ordering::SeqCst) {
+            let npc_ctx = if let Ok(p) = personality_q.get(npc_entity) {
+                llm::NpcContext {
+                    name: p.name.clone(),
+                    role: p.role.clone(),
+                    traits: p.traits.clone(),
+                    backstory: p.backstory.clone(),
+                    speech_style: p.speech_style.clone(),
+                    knowledge: p.knowledge.clone(),
+                    goals: p.goals.clone(),
+                    likes: p.likes.clone(),
+                    dislikes: p.dislikes.clone(),
+                }
+            } else {
+                // No personality — skip
+                queue.advance();
+                return;
+            };
 
-    let action = if roll < 50 {
-        // 50 %: idle
-        NpcAction::Idle
-    } else if roll < 80 {
-        // 30 %: move to a random interactable entity
-        let candidates: Vec<(Entity, &Interactable, &Transform)> = interactable_query
-            .iter()
-            .filter(|(e, _, _)| *e != npc_entity)
-            .collect();
-        if candidates.is_empty() {
-            NpcAction::Idle
-        } else {
-            let idx = (seed / 7) as usize % candidates.len();
-            NpcAction::MoveTo(candidates[idx].0)
+            // Build surroundings info
+            let npc_pos = npc_tf.translation;
+            let scan_radius = 15.0_f32;
+
+            let mut nearby = Vec::new();
+            for (entity, interactable, tf) in &interactable_query {
+                if entity == npc_entity {
+                    continue;
+                }
+                let dist = npc_pos.distance(tf.translation);
+                if dist < scan_radius {
+                    nearby.push(llm::NearbyEntity {
+                        name: interactable.name.clone(),
+                        entity_type: if interactable.is_npc {
+                            "npc".into()
+                        } else {
+                            "object".into()
+                        },
+                        distance: dist,
+                        entity,
+                    });
+                }
+            }
+
+            let player_distance = player_query
+                .single()
+                .ok()
+                .map(|pt| npc_pos.distance(pt.translation));
+
+            engine.request_decision(llm::DecisionRequest {
+                npc: npc_ctx,
+                surroundings: llm::SurroundingsInfo {
+                    nearby_entities: nearby,
+                    player_distance,
+                },
+                npc_entity,
+            });
+
+            commands.entity(npc_entity).insert(NpcPendingDecision);
         }
-    } else {
-        // 20 %: speak a random line
-        let idx = (seed / 13) as usize % NPC_IDLE_LINES.len();
-        NpcAction::Speak(NPC_IDLE_LINES[idx].to_string())
-    };
+    }
 
-    state.current_action = Some(action);
-
-    // Reset cooldown so the NPC won't re-decide immediately after
-    // finishing this action.
-    state.cooldown.reset();
     queue.advance();
+}
+
+/// Polls LLM for completed NPC decisions and assigns the resulting actions.
+pub fn npc_decision_poll_system(
+    mut commands: Commands,
+    llm_engine: Option<Res<llm::LlmEngine>>,
+    mut npcs: Query<&mut NpcDecisionState, With<NpcBrain>>,
+    interactable_q: Query<(Entity, &Interactable)>,
+) {
+    let Some(engine) = llm_engine else { return };
+
+    while let Some(response) = engine.poll_decision() {
+        commands
+            .entity(response.npc_entity)
+            .remove::<NpcPendingDecision>();
+
+        let Ok(mut state) = npcs.get_mut(response.npc_entity) else {
+            continue;
+        };
+
+        let action = match response.action {
+            llm::LlmAction::Idle => NpcAction::Idle,
+            llm::LlmAction::Speak(text) => NpcAction::Speak(text),
+            llm::LlmAction::SpeakTo { target_name, text } => {
+                // Find target entity by name
+                if let Some((entity, _)) = interactable_q
+                    .iter()
+                    .find(|(_, i)| i.name.eq_ignore_ascii_case(&target_name))
+                {
+                    NpcAction::SpeakTo {
+                        target: entity,
+                        text,
+                    }
+                } else {
+                    NpcAction::Speak(text)
+                }
+            }
+            llm::LlmAction::MoveTo { target_name } => {
+                if let Some((entity, _)) = interactable_q
+                    .iter()
+                    .find(|(_, i)| i.name.eq_ignore_ascii_case(&target_name))
+                {
+                    NpcAction::MoveTo(entity)
+                } else {
+                    NpcAction::Idle
+                }
+            }
+        };
+
+        state.current_action = Some(action);
+    }
 }
 
 /// Execute the current action.  For `Speak` actions the text is shown via

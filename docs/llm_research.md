@@ -226,28 +226,32 @@ fn poll_llm_responses(
 
 ## Recommended Models
 
-### Primary: SmolLM2 1.7B Instruct (Best for games)
+### Primary: Gemma 4 2B IT (Selected for Hollowreach)
 
 | Property | Value |
 |---|---|
-| **Model** | SmolLM2-1.7B-Instruct |
+| **Model** | google/gemma-4-E2B-it |
 | **Quantization** | Q4_K_M |
-| **File size** | 1.06 GB |
-| **Parameters** | 1.7B |
-| **RAM required** | ~2-3 GB (CPU inference) |
-| **VRAM required** | ~1.5 GB (full GPU offload) |
-| **Download** | `huggingface-cli download bartowski/SmolLM2-1.7B-Instruct-GGUF --include "SmolLM2-1.7B-Instruct-Q4_K_M.gguf" --local-dir ./` |
-| **Direct URL** | https://huggingface.co/bartowski/SmolLM2-1.7B-Instruct-GGUF/resolve/main/SmolLM2-1.7B-Instruct-Q4_K_M.gguf |
-| **Chat template** | ChatML (`<\|im_start\|>system/user/assistant`) |
+| **File size** | 2.9 GB |
+| **Parameters** | 2B |
+| **VRAM required** | ~3 GB (full GPU offload) |
+| **Download** | Available from HuggingFace as GGUF |
+| **Chat template** | Gemma 4 (`<start_of_turn>user/model`) |
 
 **Why this model:**
-- Small enough for real-time game use (1 GB on disk)
-- Fast inference even on CPU (~50-100 tokens/sec on modern CPU)
-- Instruction-tuned for following prompts (important for NPC personality)
-- ChatML format works well for system prompts defining NPC personality
-- 255K downloads on HuggingFace (well-tested)
+- Fits within 8 GB VRAM budget alongside Chatterbox TTS (~3 GB) and Bevy renderer (~2 GB)
+- Gemma 4 architecture — strong instruction following for a 2B model
+- Produces in-character, contextual NPC dialogue
+- Fast inference on GPU via Vulkan (llama-cpp-2 crate)
+- No CPU fallback — GPU only, 8 GB VRAM minimum
 
-### Alternative: Llama 3.2 3B Instruct (Higher quality, more resources)
+**VRAM budget (8 GB):**
+- Bevy renderer: ~2 GB
+- Gemma 4 2B LLM: ~3 GB
+- Chatterbox TTS: ~3 GB
+- Total: ~8 GB
+
+### Previous candidates (not selected)
 
 | Property | Value |
 |---|---|
