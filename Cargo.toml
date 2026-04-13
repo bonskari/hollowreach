@@ -34,3 +34,8 @@ name = "test_9slice"
 path = "tests/test_9slice.rs"
 harness = false
 
+[[test]]
+name = "test_chest_unlock"
+path = "tests/test_chest_unlock.rs"
+harness = false
+
