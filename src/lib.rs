@@ -17,6 +17,7 @@ pub mod inventory;
 pub mod llm;
 pub mod npc_ai;
 pub mod npc_look_at;
+pub mod npc_memory;
 pub mod panel;
 pub mod pause_menu;
 pub mod text_input;
@@ -633,6 +634,7 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(npc_look_at::NpcLookAtPlugin)
             .add_plugins(tts::TtsPlugin)
             .add_plugins(llm::LlmPlugin)
+            .add_plugins(npc_memory::NpcMemoryPlugin)
             .add_plugins(interactions::InteractionPlugin)
             .add_plugins(context::ContextAreaPlugin)
             .add_plugins(panel::PanelPlugin)
@@ -1570,6 +1572,8 @@ pub fn interact_system(
     mut panel_commands: MessageWriter<panel::PanelCommand>,
     mut tts_requests: MessageWriter<tts::TtsRequest>,
     llm_engine: Option<Res<llm::LlmEngine>>,
+    npc_inv_q: Query<&inventory::NpcInventory>,
+    npc_mem_q: Query<&npc_memory::NpcMemory>,
 ) {
     cooldown.0.tick(time.delta());
 
@@ -1616,6 +1620,8 @@ pub fn interact_system(
         let greeting = "...";
         if let Some(ref engine) = llm_engine {
             if let Some(personality) = opt_personality {
+                let inv = npc_inv_q.get(target_entity).map(|i| i.items.clone()).unwrap_or_default();
+                let mem = npc_mem_q.get(target_entity).map(|m| m.format_for_prompt(10)).unwrap_or_default();
                 let npc_ctx = llm::NpcContext {
                     name: personality.name.clone(),
                     role: personality.role.clone(),
@@ -1626,10 +1632,12 @@ pub fn interact_system(
                     goals: personality.goals.clone(),
                     likes: personality.likes.clone(),
                     dislikes: personality.dislikes.clone(),
+                    inventory: inv,
+                    memories: mem,
                 };
                 engine.request_dialogue(llm::DialogueRequest {
                     npc: npc_ctx,
-                    player_text: "The player approaches you and wants to talk.".into(),
+                    player_text: "A young wanderer approaches you.".into(),
                     history: vec![],
                     npc_entity: target_entity,
                 });
@@ -1741,6 +1749,8 @@ pub fn handle_say_event(
     mut panel_commands: MessageWriter<panel::PanelCommand>,
     llm_engine: Option<Res<llm::LlmEngine>>,
     personality_q: Query<&NpcPersonality>,
+    npc_inv_q: Query<&inventory::NpcInventory>,
+    npc_mem_q: Query<&npc_memory::NpcMemory>,
 ) {
     for event in say_events.read() {
         // Show the player's text immediately
@@ -1753,6 +1763,8 @@ pub fn handle_say_event(
 
         // Send to LLM for NPC response
         if let Some(ref engine) = llm_engine {
+            let inv = npc_inv_q.get(event.npc).map(|i| i.items.clone()).unwrap_or_default();
+            let mem = npc_mem_q.get(event.npc).map(|m| m.format_for_prompt(10)).unwrap_or_default();
             let npc_ctx = if let Ok(p) = personality_q.get(event.npc) {
                 llm::NpcContext {
                     name: p.name.clone(),
@@ -1764,6 +1776,8 @@ pub fn handle_say_event(
                     goals: p.goals.clone(),
                     likes: p.likes.clone(),
                     dislikes: p.dislikes.clone(),
+                    inventory: inv.clone(),
+                    memories: mem.clone(),
                 }
             } else {
                 llm::NpcContext {
@@ -1776,6 +1790,8 @@ pub fn handle_say_event(
                     goals: vec![],
                     likes: vec![],
                     dislikes: vec![],
+                    inventory: inv,
+                    memories: mem,
                 }
             };
 

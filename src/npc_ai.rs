@@ -33,8 +33,8 @@ pub enum NpcAction {
     Speak(String),
     /// Speak a line directed at a specific entity.
     SpeakTo { target: Entity, text: String },
-    /// Give an item to a target entity.
-    Give { target: Entity, item_id: String },
+    /// Give an item to a target entity, with optional dialogue.
+    Give { target: Entity, item_id: String, text: String },
     /// Do nothing.
     Idle,
 }
@@ -266,6 +266,8 @@ pub fn npc_decision_system(
     player_query: Query<&Transform, With<Player>>,
     interactable_query: Query<(Entity, &Interactable, &Transform)>,
     personality_q: Query<&NpcPersonality>,
+    npc_inv_q: Query<&crate::inventory::NpcInventory>,
+    npc_mem_q: Query<&crate::npc_memory::NpcMemory>,
     llm_engine: Option<Res<llm::LlmEngine>>,
 ) {
     if queue.queue.is_empty() {
@@ -307,6 +309,8 @@ pub fn npc_decision_system(
     // --- Send LLM decision request ---
     if let Some(ref engine) = llm_engine {
         if engine.ready.load(std::sync::atomic::Ordering::SeqCst) {
+            let inv = npc_inv_q.get(npc_entity).map(|i| i.items.clone()).unwrap_or_default();
+            let mem = npc_mem_q.get(npc_entity).map(|m| m.format_for_prompt(10)).unwrap_or_default();
             let npc_ctx = if let Ok(p) = personality_q.get(npc_entity) {
                 llm::NpcContext {
                     name: p.name.clone(),
@@ -318,6 +322,8 @@ pub fn npc_decision_system(
                     goals: p.goals.clone(),
                     likes: p.likes.clone(),
                     dislikes: p.dislikes.clone(),
+                    inventory: inv,
+                    memories: mem,
                 }
             } else {
                 // No personality — skip
@@ -376,6 +382,7 @@ pub fn npc_decision_poll_system(
     llm_engine: Option<Res<llm::LlmEngine>>,
     mut npcs: Query<&mut NpcDecisionState, With<NpcBrain>>,
     interactable_q: Query<(Entity, &Interactable)>,
+    player_q: Query<Entity, With<Player>>,
 ) {
     let Some(engine) = llm_engine else { return };
 
@@ -415,6 +422,22 @@ pub fn npc_decision_poll_system(
                     NpcAction::Idle
                 }
             }
+            llm::LlmAction::Give { target_name, item_id, text } => {
+                // "wanderer" or similar → give to player
+                let target = if target_name.to_lowercase().contains("wanderer") {
+                    player_q.single().ok()
+                } else {
+                    interactable_q
+                        .iter()
+                        .find(|(_, i)| i.name.eq_ignore_ascii_case(&target_name))
+                        .map(|(e, _)| e)
+                };
+                if let Some(target) = target {
+                    NpcAction::Give { target, item_id, text }
+                } else {
+                    NpcAction::Idle
+                }
+            }
         };
 
         state.current_action = Some(action);
@@ -436,9 +459,11 @@ pub fn npc_execute_system(
         With<NpcBrain>,
     >,
     mut panel_commands: MessageWriter<crate::panel::PanelCommand>,
+    mut give_events: MessageWriter<crate::inventory::GiveItemEvent>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
+    player_q: Query<Entity, With<Player>>,
 ) {
-    for (_entity, mut state, npc_tf, interactable, mut look_at, is_interacting) in &mut npcs {
+    for (npc_entity, mut state, npc_tf, interactable, mut look_at, is_interacting) in &mut npcs {
         // Player is interacting with this NPC — freeze all actions
         if is_interacting {
             state.current_action = None;
@@ -499,11 +524,29 @@ pub fn npc_execute_system(
                 }
             }
 
-            NpcAction::Give { target, .. } => {
-                // Inventory system not yet implemented — just clear.
+            NpcAction::Give { target, item_id, .. } => {
                 if let Ok(target_tf) = target_transforms.get(*target) {
                     let dist = npc_tf.translation.xz().distance(target_tf.translation.xz());
                     if dist < 1.5 {
+                        give_events.write(crate::inventory::GiveItemEvent {
+                            from: npc_entity,
+                            to: *target,
+                            item_id: item_id.clone(),
+                        });
+
+                        let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
+                        if let NpcAction::Give { text, .. } = action {
+                            if !text.is_empty() {
+                                panel_commands.write(crate::panel::PanelCommand {
+                                    action: crate::panel::PanelAction::Open(
+                                        crate::panel::PanelContent::Dialogue {
+                                            speaker: speaker.to_string(),
+                                            text: text.clone(),
+                                        },
+                                    ),
+                                });
+                            }
+                        }
                         state.current_action = None;
                     }
                 } else {

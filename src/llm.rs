@@ -24,6 +24,8 @@ pub struct NpcContext {
     pub goals: Vec<String>,
     pub likes: Vec<String>,
     pub dislikes: Vec<String>,
+    pub inventory: Vec<String>,
+    pub memories: String,
 }
 
 /// A single exchange in the conversation history.
@@ -86,6 +88,11 @@ pub enum LlmAction {
     Speak(String),
     SpeakTo { target_name: String, text: String },
     MoveTo { target_name: String },
+    Give { target_name: String, item_id: String, text: String },
+}
+
+fn humanize_item(item_id: &str) -> String {
+    item_id.replace('_', " ")
 }
 
 /// Loading progress, forwarded to the loading screen.
@@ -199,11 +206,21 @@ fn build_system_prompt(npc: &NpcContext) -> String {
     if !npc.dislikes.is_empty() {
         lines.push(format!("You dislike: {}", npc.dislikes.join(", ")));
     }
+    if !npc.inventory.is_empty() {
+        let items: Vec<String> = npc.inventory.iter().map(|i| humanize_item(i)).collect();
+        lines.push(format!("You are carrying: {}", items.join(", ")));
+    }
+
+    if !npc.memories.is_empty() {
+        lines.push(String::new());
+        lines.push(npc.memories.clone());
+    }
 
     lines.push(String::new());
     lines.push(
-        "IMPORTANT: Stay in character. Keep responses short (1-3 sentences). \
-         Do not use asterisks or stage directions. Speak naturally as your character would."
+        "You only speak dialogue — never narrate, never describe actions, \
+         never repeat instructions. Keep responses to 1-3 sentences. \
+         Speak naturally in your character's voice."
             .to_string(),
     );
 
@@ -212,20 +229,30 @@ fn build_system_prompt(npc: &NpcContext) -> String {
 
 fn build_decision_prompt(npc: &NpcContext, surroundings: &SurroundingsInfo) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("You are {}, {}.", npc.name, npc.role));
+
+    // Character context — NOT to be spoken aloud
+    lines.push("[CHARACTER]".to_string());
+    lines.push(format!("{}, {}.", npc.name, npc.role));
     lines.push(format!("Traits: {}", npc.traits.join(", ")));
-    lines.push(format!("Backstory: {}", npc.backstory));
     lines.push(format!("Speech style: {}", npc.speech_style));
     if !npc.goals.is_empty() {
-        lines.push(format!("Your current goals: {}", npc.goals.join("; ")));
+        lines.push(format!("Goals: {}", npc.goals.join("; ")));
     }
-    if !npc.knowledge.is_empty() {
-        lines.push(format!("You know: {}", npc.knowledge.join("; ")));
+    if !npc.inventory.is_empty() {
+        let items: Vec<String> = npc.inventory.iter().map(|i| humanize_item(i)).collect();
+        lines.push(format!("Carrying: {}", items.join(", ")));
     }
+
+    if !npc.memories.is_empty() {
+        lines.push(String::new());
+        lines.push(npc.memories.clone());
+    }
+
+    // Surroundings context — NOT to be spoken aloud
     lines.push(String::new());
+    lines.push("[SURROUNDINGS]".to_string());
 
     if !surroundings.nearby_entities.is_empty() {
-        lines.push("You see nearby:".to_string());
         for e in &surroundings.nearby_entities {
             lines.push(format!("- {} ({})", e.name, e.entity_type));
         }
@@ -233,15 +260,21 @@ fn build_decision_prompt(npc: &NpcContext, surroundings: &SurroundingsInfo) -> S
 
     if let Some(d) = surroundings.player_distance {
         if d < 8.0 {
-            lines.push("A traveler is nearby watching you.".to_string());
+            lines.push("- A young wanderer is nearby.".to_string());
         }
     }
 
+    // Instruction
     lines.push(String::new());
-    lines.push("Based on your personality, goals, and surroundings, decide your next action. Respond with a single JSON object. Available actions:".to_string());
-    lines.push(r#"idle, speak, move_to, speak_to"#.to_string());
-    lines.push(r#"Format: {"action": "ACTION", "target": "NAME", "text": "DIALOGUE"}"#.to_string());
-    lines.push("Only include target/text fields when relevant. Write all dialogue in character.".to_string());
+    lines.push("[DECIDE]".to_string());
+    lines.push("Pick ONE action. The text field must be dialogue only — never narrate or describe.".to_string());
+    lines.push(r#"{"action": "idle"}"#.to_string());
+    lines.push(r#"{"action": "speak", "text": "DIALOGUE"}"#.to_string());
+    lines.push(r#"{"action": "move_to", "target": "NAME"}"#.to_string());
+    lines.push(r#"{"action": "speak_to", "target": "NAME", "text": "DIALOGUE"}"#.to_string());
+    if !npc.inventory.is_empty() {
+        lines.push(r#"{"action": "give", "target": "NAME", "item": "ITEM_ID", "text": "DIALOGUE"}"#.to_string());
+    }
 
     lines.join("\n")
 }
@@ -434,11 +467,11 @@ fn generate_dialogue(
     let mut prompt = String::new();
     prompt.push_str("<start_of_turn>user\n");
     prompt.push_str(&system_prompt);
-    prompt.push_str("\n\nThe player says: ");
+    prompt.push_str("\n\nThe young wanderer says: ");
     prompt.push_str(&req.player_text);
     prompt.push_str("<end_of_turn>\n<start_of_turn>model\n<|channel>default\n");
 
-    run_inference(model, ctx, &prompt, 150)
+    run_inference(model, ctx, &prompt, 150, None)
 }
 
 fn generate_decision(
@@ -454,16 +487,33 @@ fn generate_decision(
         decision_prompt
     );
 
-    let text = run_inference(model, ctx, &prompt, 80);
+    let text = run_inference(model, ctx, &prompt, 80, Some(DECISION_GRAMMAR));
     info!("LLM: raw decision output: {:?}", text);
     parse_decision(&text)
 }
+
+/// GBNF grammar constraining NPC decision output to valid JSON actions.
+const DECISION_GRAMMAR: &str = r#"
+root ::= "{" ws action ws "}"
+action ::= idle | speak | speak-to | move-to | give
+idle ::= "\"action\": \"idle\""
+speak ::= "\"action\": \"speak\", \"text\": " string
+speak-to ::= "\"action\": \"speak_to\", \"target\": " string ", \"text\": " string
+move-to ::= "\"action\": \"move_to\", \"target\": " string
+give ::= "\"action\": \"give\", \"target\": " string ", \"item\": " string ", \"text\": " string
+string ::= "\"" chars "\""
+chars ::= char*
+char ::= [^"\\] | "\\" escape
+escape ::= ["\\nrt]
+ws ::= [ \t\n]*
+"#;
 
 fn run_inference(
     model: &llama_cpp_2::model::LlamaModel,
     ctx: &mut llama_cpp_2::context::LlamaContext,
     prompt: &str,
     max_tokens: usize,
+    grammar: Option<&str>,
 ) -> String {
     use llama_cpp_2::llama_batch::LlamaBatch;
     use llama_cpp_2::model::AddBos;
@@ -494,13 +544,20 @@ fn run_inference(
         return String::new();
     }
 
-    // Set up sampler
-    let mut sampler = LlamaSampler::chain_simple([
+    // Set up sampler — with optional grammar constraint
+    let mut samplers: Vec<LlamaSampler> = vec![
         LlamaSampler::temp(0.8),
         LlamaSampler::top_p(0.9, 1),
         LlamaSampler::top_k(40),
-        LlamaSampler::dist(42),
-    ]);
+    ];
+    if let Some(grammar_str) = grammar {
+        match LlamaSampler::grammar(model, grammar_str, "root") {
+            Ok(g) => samplers.push(g),
+            Err(e) => warn!("LLM: grammar init failed: {e:?}"),
+        }
+    }
+    samplers.push(LlamaSampler::dist(42));
+    let mut sampler = LlamaSampler::chain_simple(samplers);
 
     info!("LLM: prompt ({} tokens): {:?}...{:?}",
         tokens.len(),
@@ -632,6 +689,8 @@ fn value_to_action(val: &serde_json::Value) -> LlmAction {
     let target = val.get("target").and_then(|t| t.as_str()).unwrap_or("").to_string();
     let text = val.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
 
+    let item = val.get("item").and_then(|t| t.as_str()).unwrap_or("").to_string();
+
     match action {
         "speak" if !text.is_empty() => {
             if !target.is_empty() {
@@ -644,6 +703,9 @@ fn value_to_action(val: &serde_json::Value) -> LlmAction {
             LlmAction::SpeakTo { target_name: target, text }
         }
         "move_to" if !target.is_empty() => LlmAction::MoveTo { target_name: target },
+        "give" if !target.is_empty() && !item.is_empty() => {
+            LlmAction::Give { target_name: target, item_id: item, text }
+        }
         _ => LlmAction::Idle,
     }
 }
