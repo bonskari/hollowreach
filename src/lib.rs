@@ -10,6 +10,7 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
+pub mod chat_log;
 pub mod context;
 pub mod debug_overlay;
 pub mod interactions;
@@ -638,6 +639,7 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(tts::TtsPlugin)
             .add_plugins(llm::LlmPlugin)
             .add_plugins(npc_memory::NpcMemoryPlugin)
+            .add_plugins(chat_log::ChatLogPlugin)
             .add_plugins(interactions::InteractionPlugin)
             .add_plugins(context::ContextAreaPlugin)
             .add_plugins(panel::PanelPlugin)
@@ -1640,7 +1642,7 @@ pub fn interact_system(
                 };
                 engine.request_dialogue(llm::DialogueRequest {
                     npc: npc_ctx,
-                    player_text: "Hello.".into(),
+                    player_text: "*walks up and looks at you, waiting*".into(),
                     history: vec![],
                     npc_entity: target_entity,
                 });
@@ -1749,19 +1751,17 @@ pub fn interact_system(
 /// Handles SayEvent — sends player text to LLM for NPC response.
 pub fn handle_say_event(
     mut say_events: MessageReader<text_input::SayEvent>,
-    mut panel_commands: MessageWriter<panel::PanelCommand>,
+    mut chat_events: MessageWriter<chat_log::PushChatMessage>,
     llm_engine: Option<Res<llm::LlmEngine>>,
     personality_q: Query<&NpcPersonality>,
     npc_inv_q: Query<&inventory::NpcInventory>,
     npc_mem_q: Query<&npc_memory::NpcMemory>,
 ) {
     for event in say_events.read() {
-        // Show the player's text immediately
-        panel_commands.write(panel::PanelCommand {
-            action: panel::PanelAction::Open(panel::PanelContent::Dialogue {
-                speaker: "You".to_string(),
-                text: event.text.clone(),
-            }),
+        // Push player's text into chat log
+        chat_events.write(chat_log::PushChatMessage {
+            speaker: "You".to_string(),
+            text: event.text.clone(),
         });
 
         // Send to LLM for NPC response
@@ -1808,10 +1808,10 @@ pub fn handle_say_event(
     }
 }
 
-/// Polls LLM for dialogue responses and shows them + triggers TTS.
+/// Polls LLM for dialogue responses and shows them in the chat log + triggers TTS.
 pub fn llm_dialogue_poll_system(
     llm_engine: Option<Res<llm::LlmEngine>>,
-    mut panel_commands: MessageWriter<panel::PanelCommand>,
+    mut chat_events: MessageWriter<chat_log::PushChatMessage>,
     mut tts_events: MessageWriter<tts::TtsRequest>,
     personality_q: Query<&NpcPersonality>,
 ) {
@@ -1832,12 +1832,10 @@ pub fn llm_dialogue_poll_system(
             .map(|p| p.voice_profile.clone())
             .unwrap_or_default();
 
-        // Show in dialogue panel
-        panel_commands.write(panel::PanelCommand {
-            action: panel::PanelAction::Open(panel::PanelContent::Dialogue {
-                speaker: speaker.clone(),
-                text: response.text.clone(),
-            }),
+        // Push into chat log (top of screen)
+        chat_events.write(chat_log::PushChatMessage {
+            speaker: speaker.clone(),
+            text: response.text.clone(),
         });
 
         // Trigger TTS

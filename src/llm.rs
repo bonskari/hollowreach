@@ -517,7 +517,7 @@ fn generate_decision(
         decision_prompt
     );
 
-    let text = run_inference(model, ctx, &prompt, 80, Some(DECISION_GRAMMAR));
+    let text = run_inference(model, ctx, &prompt, 80, None);
     info!("LLM: raw decision output: {:?}", text);
     parse_decision(&text)
 }

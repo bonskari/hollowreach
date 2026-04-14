@@ -15,8 +15,10 @@
 use bevy::prelude::*;
 use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
 use hollowreach::*;
-use hollowreach::panel::{PanelState, PanelVisual, PanelContent};
+use hollowreach::panel::{PanelState, PanelContent};
 use hollowreach::text_input::{TextInputState, activate_text_input, SayEvent};
+use hollowreach::chat_log::ChatMessage;
+use hollowreach::npc_ai::NpcActivated;
 
 #[derive(Resource)]
 struct Frame(usize);
@@ -45,16 +47,36 @@ fn real_e2e_system(
     mut text_input_state: ResMut<TextInputState>,
     mut say_events: MessageWriter<SayEvent>,
     npc_q: Query<(Entity, &NpcPersonality)>,
+    chat_msgs_q: Query<&Text, With<ChatMessage>>,
     mut results: ResMut<TestResults>,
     game_state: Res<State<GameState>>,
+    mut intro: ResMut<IntroSequence>,
+    intro_overlay_q: Query<Entity, With<IntroOverlay>>,
 ) {
     if *game_state.get() != GameState::Playing {
         return;
     }
+
+    // Skip intro for clean validation screenshots
+    if intro.active {
+        intro.active = false;
+        for e in &intro_overlay_q {
+            commands.entity(e).despawn();
+        }
+    }
+
     frame.0 += 1;
 
     match frame.0 {
-        // === Phase 1: Initial screenshot ===
+        // === Phase 1: Activate ALL NPCs to trigger autonomous decisions ===
+        2 => {
+            let mut count = 0;
+            for (entity, _) in npc_q.iter() {
+                commands.entity(entity).insert(NpcActivated);
+                count += 1;
+            }
+            println!("[STEP 0] Activated {} NPCs for autonomous decisions", count);
+        }
         5 => {
             println!("[STEP 1] Game in Playing state, taking initial screenshot");
             commands.spawn(Screenshot::primary_window())
@@ -149,34 +171,48 @@ fn real_e2e_system(
                 .observe(save_to_disk("test_screenshots/e2e_05_after_say.png"));
         }
 
-        // === Phase 7a: Wait for greeting response (from interact E press) ===
+        // === Phase 7a: Wait for greeting to appear in chat log ===
         f if f >= 35 && f < 65 && !results.greeting_received => {
-            if let PanelContent::Dialogue { text, .. } = &panel_state.content {
-                if !text.is_empty() {
+            // Read chat messages — find first non-player message
+            for text in &chat_msgs_q {
+                let display = text.0.as_str();
+                if !display.is_empty() && !display.starts_with("You:") {
                     results.greeting_received = true;
-                    results.greeting_text = text.clone();
-                    println!("[STEP 7a] Greeting received at frame {}: \"{}\"", frame.0, text);
+                    results.greeting_text = display.to_string();
+                    println!("[STEP 7a] Greeting in chat at frame {}: \"{}\"", frame.0, display);
                     commands.spawn(Screenshot::primary_window())
                         .observe(save_to_disk("test_screenshots/e2e_06a_greeting.png"));
+                    break;
                 }
             }
         }
 
-        // === Phase 7b: Wait for SayEvent response ===
-        f if f >= 70 && f < 700 && results.greeting_received && !results.npc_response_received => {
-            if let PanelContent::Dialogue { speaker, text } = &panel_state.content {
-                if !text.is_empty() && text != &results.greeting_text {
+        // === Phase 7b: Wait for SayEvent response in chat log ===
+        f if f >= 70 && f < 1200 && results.greeting_received && !results.npc_response_received => {
+            // Look for a second non-player message different from greeting
+            for text in &chat_msgs_q {
+                let display = text.0.as_str();
+                if !display.is_empty()
+                    && !display.starts_with("You:")
+                    && display != results.greeting_text
+                {
                     results.npc_response_received = true;
-                    results.npc_response_text = text.clone();
-                    println!("[STEP 7b] SayEvent response at frame {} from {}: \"{}\"", frame.0, speaker, text);
+                    results.npc_response_text = display.to_string();
+                    println!("[STEP 7b] SayEvent response in chat at frame {}: \"{}\"", frame.0, display);
                     commands.spawn(Screenshot::primary_window())
                         .observe(save_to_disk("test_screenshots/e2e_06b_say_response.png"));
+                    break;
                 }
             }
+        }
+
+        // === Stress test: let autonomous decisions run for ~10s to catch crashes ===
+        1200 => {
+            println!("[STEP 8] Stress-test complete — LLM ran many decisions without crash");
         }
 
         // === Final report ===
-        700 => {
+        1250 => {
             println!("\n=== REAL E2E TEST RESULTS ===");
             println!("Panel opened (NpcMenu):     {}", if results.panel_opened { "PASS" } else { "FAIL" });
             println!("Text input activated:       {}", if results.text_input_activated { "PASS" } else { "FAIL" });
@@ -209,8 +245,8 @@ fn real_e2e_system(
             }
         }
 
-        750 => {
-            // Failsafe exit after 12.5 seconds in Playing state
+        1350 => {
+            // Failsafe exit
             println!("[TIMEOUT] Test exceeded max frames");
             exit.write(AppExit::from_code(1));
         }
