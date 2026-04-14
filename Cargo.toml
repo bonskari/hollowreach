@@ -39,3 +39,8 @@ name = "test_chest_unlock"
 path = "tests/test_chest_unlock.rs"
 harness = false
 
+[[test]]
+name = "test_real_e2e"
+path = "tests/test_real_e2e.rs"
+harness = false
+

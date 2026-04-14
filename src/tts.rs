@@ -418,6 +418,15 @@ fn tts_loading_ui(mut commands: Commands) {
         });
 }
 
+/// Persistent loading progress per engine, used to compute combined progress.
+#[derive(Resource, Default)]
+struct LoadingProgress {
+    tts_progress: f32,
+    tts_message: String,
+    llm_progress: f32,
+    llm_message: String,
+}
+
 fn tts_loading_ui_update(
     mut commands: Commands,
     tts_engine: Option<Res<TtsEngine>>,
@@ -426,32 +435,53 @@ fn tts_loading_ui_update(
     mut text_q: Query<&mut Text, With<TtsLoadingStatusText>>,
     mut bar_q: Query<&mut Node, With<TtsProgressBar>>,
     mut next_state: ResMut<NextState<crate::GameState>>,
+    mut progress: Local<LoadingProgress>,
 ) {
-    // Poll TTS loading
+    // Drain TTS loading messages
     if let Some(ref engine) = tts_engine {
         while let Some(status) = engine.poll_loading() {
-            if let Ok(mut text) = text_q.single_mut() {
-                **text = status.message;
-            }
-            if let Ok(mut node) = bar_q.single_mut() {
-                node.width = Val::Percent(status.progress * 50.0); // TTS is 0-50%
-            }
+            progress.tts_progress = status.progress;
+            progress.tts_message = status.message;
         }
     }
 
-    // Poll LLM loading
+    // Drain LLM loading messages
     if let Some(ref engine) = llm_engine {
         while let Some(status) = engine.poll_loading() {
-            if let Ok(mut text) = text_q.single_mut() {
-                **text = status.message;
-            }
-            if let Ok(mut node) = bar_q.single_mut() {
-                node.width = Val::Percent(50.0 + status.progress * 50.0); // LLM is 50-100%
-            }
+            progress.llm_progress = status.progress;
+            progress.llm_message = status.message;
         }
     }
 
-    // Transition to Playing only when BOTH engines are ready
+    // Combined progress: average of both engines
+    let combined = (progress.tts_progress + progress.llm_progress) * 0.5;
+
+    // Display message — show whichever is currently in progress, or the slower one
+    let display_message = if progress.tts_progress < 1.0 && progress.llm_progress < 1.0 {
+        // Both still loading — show whichever is further behind
+        if progress.tts_progress < progress.llm_progress {
+            &progress.tts_message
+        } else {
+            &progress.llm_message
+        }
+    } else if progress.tts_progress < 1.0 {
+        &progress.tts_message
+    } else if progress.llm_progress < 1.0 {
+        &progress.llm_message
+    } else {
+        "Ready"
+    };
+
+    if let Ok(mut text) = text_q.single_mut() {
+        if !display_message.is_empty() {
+            **text = display_message.to_string();
+        }
+    }
+    if let Ok(mut node) = bar_q.single_mut() {
+        node.width = Val::Percent(combined * 100.0);
+    }
+
+    // Transition to Playing when BOTH engines are ready
     let tts_ready = tts_engine
         .as_ref()
         .is_some_and(|e| e.ready.load(Ordering::SeqCst));
