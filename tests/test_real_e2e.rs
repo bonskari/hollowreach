@@ -27,6 +27,8 @@ struct TestResults {
     greeting_present: bool,
     text_input_activated: bool,
     say_event_fired: bool,
+    greeting_received: bool,
+    greeting_text: String,
     npc_response_received: bool,
     npc_response_text: String,
     final_outcome: String,
@@ -147,48 +149,51 @@ fn real_e2e_system(
                 .observe(save_to_disk("test_screenshots/e2e_05_after_say.png"));
         }
 
-        // === Phase 7: Wait for LLM response (multiple frames) ===
-        // LLM inference takes 1-3 seconds = ~60-180 frames at 60fps
-        // Check every 60 frames up to ~10 seconds
-        100 | 200 | 300 | 400 | 500 | 600 => {
-            match &panel_state.content {
-                PanelContent::Dialogue { speaker, text } => {
-                    if speaker == "Sir Roland" || speaker == "Sir Roland" {
-                        if !text.is_empty() && !results.npc_response_received {
-                            results.npc_response_received = true;
-                            results.npc_response_text = text.clone();
-                            println!("[STEP 7] NPC response received from {}: \"{}\"", speaker, text);
-                        }
-                    }
-                }
-                PanelContent::NpcMenu { .. } => {
-                    println!("[STEP 7] Frame {}: still in NPC menu", frame.0);
-                }
-                other => {
-                    println!("[STEP 7] Frame {}: panel content = {:?}", frame.0, other);
+        // === Phase 7a: Wait for greeting response (from interact E press) ===
+        f if f >= 35 && f < 65 && !results.greeting_received => {
+            if let PanelContent::Dialogue { text, .. } = &panel_state.content {
+                if !text.is_empty() {
+                    results.greeting_received = true;
+                    results.greeting_text = text.clone();
+                    println!("[STEP 7a] Greeting received at frame {}: \"{}\"", frame.0, text);
+                    commands.spawn(Screenshot::primary_window())
+                        .observe(save_to_disk("test_screenshots/e2e_06a_greeting.png"));
                 }
             }
         }
 
-        650 => {
-            commands.spawn(Screenshot::primary_window())
-                .observe(save_to_disk("test_screenshots/e2e_06_npc_response.png"));
+        // === Phase 7b: Wait for SayEvent response ===
+        f if f >= 70 && f < 700 && results.greeting_received && !results.npc_response_received => {
+            if let PanelContent::Dialogue { speaker, text } = &panel_state.content {
+                if !text.is_empty() && text != &results.greeting_text {
+                    results.npc_response_received = true;
+                    results.npc_response_text = text.clone();
+                    println!("[STEP 7b] SayEvent response at frame {} from {}: \"{}\"", frame.0, speaker, text);
+                    commands.spawn(Screenshot::primary_window())
+                        .observe(save_to_disk("test_screenshots/e2e_06b_say_response.png"));
+                }
+            }
         }
 
         // === Final report ===
         700 => {
             println!("\n=== REAL E2E TEST RESULTS ===");
-            println!("Panel opened (NpcMenu):    {}", if results.panel_opened { "PASS" } else { "FAIL" });
-            println!("Greeting present:          {}", if results.greeting_present { "PASS" } else { "FAIL (showed '...' or empty)" });
-            println!("Text input activated:      {}", if results.text_input_activated { "PASS" } else { "FAIL" });
-            println!("SayEvent fired:            {}", if results.say_event_fired { "PASS" } else { "FAIL" });
-            println!("NPC response received:     {}", if results.npc_response_received { "PASS" } else { "FAIL" });
+            println!("Panel opened (NpcMenu):     {}", if results.panel_opened { "PASS" } else { "FAIL" });
+            println!("Text input activated:       {}", if results.text_input_activated { "PASS" } else { "FAIL" });
+            println!("SayEvent fired:             {}", if results.say_event_fired { "PASS" } else { "FAIL" });
+            println!("Greeting received:          {}", if results.greeting_received { "PASS" } else { "FAIL" });
+            if results.greeting_received {
+                println!("  Greeting: \"{}\"", results.greeting_text);
+            }
+            println!("SayEvent response received: {}", if results.npc_response_received { "PASS" } else { "FAIL" });
             if results.npc_response_received {
-                println!("NPC said: \"{}\"", results.npc_response_text);
+                println!("  NPC reply: \"{}\"", results.npc_response_text);
             }
             println!("=============================\n");
 
-            let critical_pass = results.panel_opened && results.say_event_fired && results.npc_response_received;
+            let critical_pass = results.panel_opened
+                && results.greeting_received
+                && results.npc_response_received;
             results.final_outcome = if critical_pass {
                 "SUCCESS".to_string()
             } else {

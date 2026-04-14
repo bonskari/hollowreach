@@ -463,15 +463,45 @@ fn generate_dialogue(
 ) -> String {
     let system_prompt = build_system_prompt(&req.npc);
 
-    // Build Gemma 4 chat format manually
+    // Build Gemma 4 chat format manually.
+    // Prefill model output with `"` to force direct speech and avoid thinking mode.
     let mut prompt = String::new();
     prompt.push_str("<start_of_turn>user\n");
     prompt.push_str(&system_prompt);
-    prompt.push_str("\n\nThe young wanderer says: ");
+    prompt.push_str("\n\nThe young wanderer says: \"");
     prompt.push_str(&req.player_text);
-    prompt.push_str("<end_of_turn>\n<start_of_turn>model\n<|channel>default\n");
+    prompt.push_str("\"\n\nReply with only your spoken words, in character. No thinking, no narration, no quotes around your reply.");
+    prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
 
-    run_inference(model, ctx, &prompt, 150, None)
+    let raw = run_inference(model, ctx, &prompt, 150, None);
+    clean_dialogue_output(&raw)
+}
+
+/// Strip thinking-mode artifacts and surrounding quotes from LLM dialogue output.
+fn clean_dialogue_output(raw: &str) -> String {
+    let mut text = raw.to_string();
+
+    // Remove channel tags and everything before the actual dialogue
+    if let Some(pos) = text.find("<|channel>") {
+        // Find the next "Final Answer:" or just take the last paragraph after a blank line
+        if let Some(after_thought) = text[pos..].find("Final Answer:") {
+            text = text[pos + after_thought + "Final Answer:".len()..].trim().to_string();
+        } else if let Some(blank_line) = text.rfind("\n\n") {
+            text = text[blank_line + 2..].trim().to_string();
+        } else {
+            // No way to recover — return empty
+            return String::new();
+        }
+    }
+
+    // Strip end-of-turn markers
+    text = text.replace("<end_of_turn>", "").replace("<eos>", "");
+
+    // Trim quotes if model wrapped the reply
+    let trimmed = text.trim();
+    let trimmed = trimmed.trim_matches('"').trim_matches('\'').trim();
+
+    trimmed.to_string()
 }
 
 fn generate_decision(

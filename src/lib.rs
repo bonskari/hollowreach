@@ -477,7 +477,10 @@ pub struct InteractionCooldown(pub Timer);
 
 impl Default for InteractionCooldown {
     fn default() -> Self {
-        Self(Timer::from_seconds(1.0, TimerMode::Once))
+        let mut t = Timer::from_seconds(1.0, TimerMode::Once);
+        // Start finished so the first interaction works immediately
+        t.tick(std::time::Duration::from_secs(2));
+        Self(t)
     }
 }
 
@@ -1616,8 +1619,8 @@ pub fn interact_system(
             .map(|p| p.role.clone())
             .unwrap_or_default();
 
-        // Request LLM greeting — will appear when ready
-        let greeting = "...";
+        // Request LLM greeting — will appear in dialogue panel when ready
+        let greeting = "";
         if let Some(ref engine) = llm_engine {
             if let Some(personality) = opt_personality {
                 let inv = npc_inv_q.get(target_entity).map(|i| i.items.clone()).unwrap_or_default();
@@ -1637,7 +1640,7 @@ pub fn interact_system(
                 };
                 engine.request_dialogue(llm::DialogueRequest {
                     npc: npc_ctx,
-                    player_text: "A young wanderer approaches you.".into(),
+                    player_text: "Hello.".into(),
                     history: vec![],
                     npc_entity: target_entity,
                 });
