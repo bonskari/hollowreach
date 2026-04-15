@@ -66,7 +66,10 @@ fn find_head_bones(
     existing_heads: Query<&NpcHeadBone>,
 ) {
     for (bone_entity, name) in &name_q {
-        if name.as_str() != "head" {
+        // Match any bone whose name starts with "head" (case-insensitive).
+        // KayKit and Mixamo use variants like "Head", "head", "head_01".
+        let lower = name.as_str().to_lowercase();
+        if !lower.starts_with("head") {
             continue;
         }
 
@@ -90,6 +93,7 @@ fn find_head_bones(
             continue;
         }
 
+        info!("NpcLookAt: found head bone '{}' for NPC entity {:?}", name.as_str(), npc_entity);
         commands.entity(bone_entity).insert((
             NpcHeadBone { npc_root: npc_entity },
             HeadLookAtOffset { yaw: 0.0 },

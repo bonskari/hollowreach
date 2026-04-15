@@ -177,53 +177,30 @@ impl LlmEngine {
 // ---------------------------------------------------------------------------
 
 fn build_system_prompt(npc: &NpcContext) -> String {
+    // Rich personality context helps the 2B model stay in character.
+    // NO meta-instructions ("respond in character", "only spoken words", etc.)
+    // — those get echoed. The personality itself guides the model.
     let mut lines = Vec::new();
-    lines.push(format!(
-        "Your name is {}. Your role: {}. You live in the village of Hollowreach.",
-        npc.name, npc.role
-    ));
-    lines.push(format!("Backstory: {}", npc.backstory));
-    lines.push(format!("Speech style: {}", npc.speech_style));
-
+    lines.push(format!("{}, {} in Hollowreach.", npc.name, npc.role));
+    if !npc.speech_style.is_empty() {
+        lines.push(npc.speech_style.clone());
+    }
     if !npc.traits.is_empty() {
-        lines.push(format!("Personality traits: {}", npc.traits.join(", ")));
+        lines.push(format!("Traits: {}", npc.traits.join(", ")));
+    }
+    if !npc.backstory.is_empty() {
+        lines.push(npc.backstory.clone());
     }
     if !npc.knowledge.is_empty() {
-        lines.push("Things you know:".to_string());
-        for k in &npc.knowledge {
-            lines.push(format!("  - {k}"));
-        }
-    }
-    if !npc.goals.is_empty() {
-        lines.push("Your goals:".to_string());
-        for g in &npc.goals {
-            lines.push(format!("  - {g}"));
-        }
-    }
-    if !npc.likes.is_empty() {
-        lines.push(format!("You like: {}", npc.likes.join(", ")));
-    }
-    if !npc.dislikes.is_empty() {
-        lines.push(format!("You dislike: {}", npc.dislikes.join(", ")));
+        lines.push(format!("Knows: {}", npc.knowledge.join(". ")));
     }
     if !npc.inventory.is_empty() {
         let items: Vec<String> = npc.inventory.iter().map(|i| humanize_item(i)).collect();
-        lines.push(format!("You are carrying: {}", items.join(", ")));
+        lines.push(format!("Carrying: {}", items.join(", ")));
     }
-
     if !npc.memories.is_empty() {
-        lines.push(String::new());
         lines.push(npc.memories.clone());
     }
-
-    lines.push(String::new());
-    lines.push(
-        "You only speak dialogue — never narrate, never describe actions, \
-         never repeat instructions. Keep responses to 1-3 sentences. \
-         Speak naturally in your character's voice."
-            .to_string(),
-    );
-
     lines.join("\n")
 }
 
@@ -458,22 +435,32 @@ fn generate_dialogue(
 ) -> String {
     let system_prompt = build_system_prompt(&req.npc);
 
-    // Build Gemma 4 chat format manually.
+    // Single-turn with labeled dialogue roles.
+    // Priming the model turn with "NpcName:" triggers pattern-completion
+    // in the character's voice — reliable on small (2B) models.
     let mut prompt = String::new();
     prompt.push_str("<start_of_turn>user\n");
     prompt.push_str(&system_prompt);
-    prompt.push_str("\n\nThe traveler says to you: \"");
+    prompt.push_str("\n\nTraveler: ");
     prompt.push_str(&req.player_text);
-    prompt.push_str("\"\n\nRespond in character with what you say out loud. Reply with only the spoken words, no more than 2 sentences.");
     prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
+    prompt.push_str(&req.npc.name);
+    prompt.push_str(": ");
 
     let raw = run_inference(model, ctx, &prompt, 120, None);
-    clean_dialogue_output(&raw)
+    clean_dialogue_output(&raw, &req.npc.name)
 }
 
 /// Strip thinking-mode artifacts and surrounding quotes from LLM dialogue output.
-fn clean_dialogue_output(raw: &str) -> String {
+fn clean_dialogue_output(raw: &str, npc_name: &str) -> String {
     let mut text = raw.to_string();
+
+    // Strip NPC name prefix if the model repeated it (we already primed with it)
+    let prefix = format!("{}: ", npc_name);
+    let trimmed_start = text.trim_start();
+    if trimmed_start.starts_with(&prefix) {
+        text = trimmed_start[prefix.len()..].to_string();
+    }
 
     // Remove channel tags and everything before the actual dialogue
     if let Some(pos) = text.find("<|channel>") {
@@ -570,8 +557,8 @@ fn run_inference(
 
     // Context is fresh each call — no need to clear KV cache.
 
-    // Tokenize prompt (no extra BOS — chat template already includes it)
-    let tokens = match model.str_to_token(prompt, AddBos::Never) {
+    // Tokenize prompt (add BOS — Gemma models require it for proper generation)
+    let tokens = match model.str_to_token(prompt, AddBos::Always) {
         Ok(t) => t,
         Err(e) => {
             let msg = format!("tokenization failed: {e:?}");

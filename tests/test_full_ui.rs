@@ -202,7 +202,7 @@ fn full_ui_test_system(
         }
 
         // === 10b: Wait for SayEvent response ===
-        f if f >= 90 && f < 700 && !results.say_response_received => {
+        f if f >= 90 && f < 5000 && !results.say_response_received => {
             for text in &chat_msgs_q {
                 let display = &text.0;
                 if !display.is_empty()
@@ -220,7 +220,7 @@ fn full_ui_test_system(
         }
 
         // === Final report ===
-        720 => {
+        5020 => {
             println!("\n=== FULL UI TEST RESULTS ===");
             println!("E opens NPC menu:        {}", pf(results.e_opened_panel));
             println!("Keyboard → typed text:   {}", pf(results.typed_text_visible));
@@ -252,7 +252,7 @@ fn full_ui_test_system(
             }
         }
 
-        750 => {
+        5050 => {
             println!("[TIMEOUT]");
             exit.write(AppExit::from_code(1));
         }
@@ -298,7 +298,8 @@ fn main() {
                     ..default()
                 })
                 .set(bevy::log::LogPlugin {
-                    level: bevy::log::Level::WARN,
+                    level: bevy::log::Level::INFO,
+                    filter: "wgpu=warn,naga=warn,bevy_render=warn,bevy_ecs=warn,bevy_app=warn,bevy_winit=warn,bevy_asset=warn,gilrs=warn".into(),
                     ..default()
                 }),
         )

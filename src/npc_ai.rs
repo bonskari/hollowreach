@@ -701,7 +701,7 @@ pub fn npc_animation_system(
     anim_graphs: Option<Res<NpcAnimGraphs>>,
     mut npcs: Query<(Entity, &NpcDecisionState, &Children, Option<&NpcCurrentAnim>), With<NpcBrain>>,
     children_q: Query<&Children>,
-    mut animation_players: Query<(Entity, &mut AnimationPlayer)>,
+    mut players_q: Query<(&mut AnimationPlayer, Option<&AnimationGraphHandle>)>,
     mut commands: Commands,
 ) {
     let Some(graphs) = anim_graphs else { return };
@@ -726,34 +726,44 @@ pub fn npc_animation_system(
             NpcCurrentAnim::Idle => (&graphs.idle_graph, graphs.idle_node),
         };
 
-        // Find AnimationPlayer in children/grandchildren
-        fn find_anim_player(
-            children: &Children,
-            children_q: &Query<&Children>,
-            players: &Query<(Entity, &mut AnimationPlayer)>,
+        // Recursively find the first AnimationPlayer descendant.
+        fn find_anim_player<'a>(
+            start: &Children,
+            children_q: &'a Query<&Children>,
+            has_player: &dyn Fn(Entity) -> bool,
         ) -> Option<Entity> {
-            for child in children.iter() {
-                if players.get(child).is_ok() {
-                    return Some(child);
+            let mut stack: Vec<Entity> = start.iter().collect();
+            while let Some(e) = stack.pop() {
+                if has_player(e) {
+                    return Some(e);
                 }
-                if let Ok(grandchildren) = children_q.get(child) {
-                    for gc in grandchildren.iter() {
-                        if players.get(gc).is_ok() {
-                            return Some(gc);
-                        }
-                    }
+                if let Ok(grandchildren) = children_q.get(e) {
+                    stack.extend(grandchildren.iter());
                 }
             }
             None
         }
 
-        let Some(player_entity) = find_anim_player(npc_children, &children_q, &animation_players) else {
+        let has_player = |e: Entity| players_q.get(e).is_ok();
+        let Some(player_entity) = find_anim_player(npc_children, &children_q, &has_player) else {
             continue;
         };
 
-        // Set the graph handle on the entity and play the animation
-        commands.entity(player_entity).insert(AnimationGraphHandle(graph_handle.clone()));
-        if let Ok((_, mut player)) = animation_players.get_mut(player_entity) {
+        // Only play once the correct graph handle is on the player.
+        // On the first call we insert the handle; on the next frame play() works.
+        if let Ok((mut player, maybe_handle)) = players_q.get_mut(player_entity) {
+            let handle_matches = maybe_handle
+                .map(|h| h.0 == *graph_handle)
+                .unwrap_or(false);
+
+            if !handle_matches {
+                commands.entity(player_entity)
+                    .insert(AnimationGraphHandle(graph_handle.clone()));
+                // Don't play yet — graph isn't attached this frame.
+                continue;
+            }
+
+            player.stop_all();
             let active = player.play(node_index);
             active.repeat();
         }
