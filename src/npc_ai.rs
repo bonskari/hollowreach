@@ -214,36 +214,17 @@ fn build_context_hash(
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
 
-    // Player position (quantised to 2-unit grid to avoid triggering
-    // on every tiny movement — NPCs shouldn't re-decide because the
-    // player shifted 0.5 meters).
-    if let Ok(pt) = player_query.single() {
-        let px = (pt.translation.x * 0.5).round() as i32;
-        let pz = (pt.translation.z * 0.5).round() as i32;
-        px.hash(&mut hasher);
-        pz.hash(&mut hasher);
-    }
+    // Player position excluded from hash — player movement alone should
+    // not trigger NPC re-decisions. NPCs react to entity state changes
+    // and NPC movements, not to the player walking around.
 
-    // All entities within a generous radius.
-    let scan_radius_sq = 15.0_f32 * 15.0;
-    for (entity, transform, interactable) in others.iter() {
+    // Hash entity states — only changes to the world (not positions)
+    // should trigger new NPC decisions.
+    for (entity, _transform, interactable) in others.iter() {
         if entity == npc_entity {
             continue;
         }
-        let dist_sq = npc_transform
-            .translation
-            .distance_squared(transform.translation);
-        if dist_sq > scan_radius_sq {
-            continue;
-        }
-        // Identity.
         entity.to_bits().hash(&mut hasher);
-        // Quantised position (2-unit grid).
-        let qx = (transform.translation.x * 0.5).round() as i32;
-        let qz = (transform.translation.z * 0.5).round() as i32;
-        qx.hash(&mut hasher);
-        qz.hash(&mut hasher);
-        // Interactable name as a proxy for "state" until we have EntityState.
         if let Some(inter) = interactable {
             inter.name.hash(&mut hasher);
         }
