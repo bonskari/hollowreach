@@ -290,20 +290,18 @@ pub fn npc_decision_system(
         return;
     }
 
-    // Hash check: if context changed, interrupt current action for a new decision
+    // Hash check: only request a new decision when the world has changed
+    // since this NPC's last decision. This prevents spamming the same
+    // Speak action endlessly when idle.
     let ctx_hash = build_context_hash(npc_entity, npc_tf, &others, &player_query);
-    let context_changed = ctx_hash != state.last_context_hash;
-
-    if state.current_action.is_some() && !context_changed {
-        // Busy and nothing changed — keep doing current action
+    if ctx_hash == state.last_context_hash {
+        // Nothing changed — if busy, keep doing current action; if idle, stay idle.
         queue.advance();
         return;
     }
 
-    // Either idle (needs new action) or context changed (re-evaluate)
-    if context_changed {
-        state.current_action = None; // Cancel current action if context changed
-    }
+    // Context changed — cancel current action and re-evaluate.
+    state.current_action = None;
     state.last_context_hash = ctx_hash;
 
     // --- Send LLM decision request ---
