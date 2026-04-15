@@ -1734,16 +1734,9 @@ pub fn handle_say_event(
     personality_q: Query<&NpcPersonality>,
     npc_inv_q: Query<&inventory::NpcInventory>,
     npc_mem_q: Query<&npc_memory::NpcMemory>,
-    mut decision_state_q: Query<&mut npc_ai::NpcDecisionState>,
     player_q: Query<Entity, With<Player>>,
 ) {
     for event in say_events.read() {
-        // Invalidate NPC's context hash so the next autonomous tick
-        // re-evaluates based on the new memory (what player just said).
-        if let Ok(mut state) = decision_state_q.get_mut(event.npc) {
-            state.last_context_hash = state.last_context_hash.wrapping_add(1);
-        }
-
         // Push player's text into chat log
         chat_events.write(chat_log::PushChatMessage {
             speaker: "You".to_string(),
