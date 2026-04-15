@@ -506,9 +506,11 @@ fn clean_dialogue_output(raw: &str, npc_name: &str) -> String {
         .replace("<start_of_turn>", "")
         .replace("<eos>", "");
 
+    // Take only the first line — multi-line output clutters the chat log.
+    let first_line = text.lines().next().unwrap_or("").trim();
+
     // Trim quotes if model wrapped the reply
-    let trimmed = text.trim().trim_matches('"').trim_matches('\'').trim();
-    let cleaned = trimmed.to_string();
+    let cleaned = first_line.trim_matches('"').trim_matches('\'').trim().to_string();
 
     // Reject output that is a leak of prompt instructions / raw prompt content.
     // These markers never belong in in-character dialogue.

@@ -214,10 +214,12 @@ fn build_context_hash(
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
 
-    // Player position (quantised to 0.5-unit grid to reduce noise).
+    // Player position (quantised to 2-unit grid to avoid triggering
+    // on every tiny movement — NPCs shouldn't re-decide because the
+    // player shifted 0.5 meters).
     if let Ok(pt) = player_query.single() {
-        let px = (pt.translation.x * 2.0).round() as i32;
-        let pz = (pt.translation.z * 2.0).round() as i32;
+        let px = (pt.translation.x * 0.5).round() as i32;
+        let pz = (pt.translation.z * 0.5).round() as i32;
         px.hash(&mut hasher);
         pz.hash(&mut hasher);
     }
@@ -236,9 +238,9 @@ fn build_context_hash(
         }
         // Identity.
         entity.to_bits().hash(&mut hasher);
-        // Quantised position.
-        let qx = (transform.translation.x * 2.0).round() as i32;
-        let qz = (transform.translation.z * 2.0).round() as i32;
+        // Quantised position (2-unit grid).
+        let qx = (transform.translation.x * 0.5).round() as i32;
+        let qz = (transform.translation.z * 0.5).round() as i32;
         qx.hash(&mut hasher);
         qz.hash(&mut hasher);
         // Interactable name as a proxy for "state" until we have EntityState.
