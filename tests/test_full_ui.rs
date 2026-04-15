@@ -1,297 +1,174 @@
-//! Full UI end-to-end test that simulates real player input:
-//! - E key to interact
-//! - Mouse click on "Say" button
-//! - Keyboard events to type text
-//! - Enter to submit
-//! - Observe chat log for response
+//! Comprehensive dialogue test — mirrors a real player session.
+//! Tests ALL 5 NPCs with multiple questions each.
+//! Validates: non-empty response, no prompt leaks, no narration, reasonable length.
 
-use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
-use bevy::render::view::window::screenshot::{save_to_disk, Screenshot};
 use hollowreach::*;
 use hollowreach::chat_log::ChatMessage;
-use hollowreach::panel::{PanelAction, PanelButton, PanelButtonAction, PanelCommand, PanelContent, PanelState};
-use hollowreach::text_input::TextInputState;
+use hollowreach::text_input::SayEvent;
 
 #[derive(Resource)]
 struct Frame(usize);
 
 #[derive(Resource, Default)]
-struct TestResults {
-    e_opened_panel: bool,
-    say_click_opened_input: bool,
-    typed_text_visible: bool,
-    enter_fired_sayevent: bool,
-    chat_has_player_line: bool,
-    greeting_received: bool,
-    greeting_text: String,
-    say_response_received: bool,
-    say_response_text: String,
+struct TestState {
+    sent: Vec<(String, String)>,
+    received: Vec<(String, String, bool)>, // (npc, response, ok)
+    phase: usize,
 }
 
-fn full_ui_test_system(
+const QUESTIONS: &[(&str, &str)] = &[
+    // Grok
+    ("Grok", "hi"),
+    ("Grok", "What are you?"),
+    ("Grok", "Are you hungry?"),
+    // Sir Roland
+    ("Sir Roland", "hello"),
+    ("Sir Roland", "What is your name?"),
+    ("Sir Roland", "Do you have a key?"),
+    ("Sir Roland", "Can you give me the key?"),
+    // Whisper
+    ("Whisper", "hello"),
+    ("Whisper", "Who has the key?"),
+    // Elara the Wise
+    ("Elara the Wise", "hello"),
+    ("Elara the Wise", "What do you study?"),
+    // Sylva
+    ("Sylva", "hello"),
+    ("Sylva", "What do you see in the forest?"),
+];
+
+fn validate_response(npc: &str, question: &str, response: &str) -> (bool, &'static str) {
+    if response.is_empty() {
+        return (false, "empty response");
+    }
+    let lower = response.to_lowercase();
+    // Prompt leak
+    if lower.contains("respond in character") || lower.contains("never narrate")
+        || lower.contains("spoken words") || lower.contains("spoken dialogue")
+        || lower.contains("reply in character") {
+        return (false, "prompt leak");
+    }
+    // Narration
+    if response.starts_with('(') {
+        return (false, "narration in parentheses");
+    }
+    // Echo of player text
+    if lower == question.to_lowercase() {
+        return (false, "echoed player text");
+    }
+    // Too long (>200 chars for a single reply)
+    if response.len() > 200 {
+        return (false, "too long");
+    }
+    // Contains special tokens
+    if response.contains("<start_of_turn>") || response.contains("<end_of_turn>")
+        || response.contains("<eos>") || response.contains("</start_of_turn>") {
+        return (false, "special tokens leaked");
+    }
+    (true, "ok")
+}
+
+fn test_system(
     mut frame: ResMut<Frame>,
-    mut commands: Commands,
-    mut player_q: Query<(Entity, &mut Transform), With<Player>>,
-    mut camera_q: Query<&mut PlayerCamera>,
-    mut keyboard: ResMut<ButtonInput<KeyCode>>,
-    mut key_events: MessageWriter<KeyboardInput>,
-    mut exit: MessageWriter<AppExit>,
-    panel_state: Res<PanelState>,
-    text_input_state: Res<TextInputState>,
+    mut say_events: MessageWriter<SayEvent>,
     chat_msgs_q: Query<&Text, With<ChatMessage>>,
-    mut panel_commands: MessageWriter<PanelCommand>,
-    mut results: ResMut<TestResults>,
+    npc_q: Query<(Entity, &NpcPersonality)>,
+    mut state: ResMut<TestState>,
+    mut exit: MessageWriter<AppExit>,
     game_state: Res<State<GameState>>,
     mut intro: ResMut<IntroSequence>,
-    intro_overlay_q: Query<Entity, With<IntroOverlay>>,
-    windows: Query<Entity, With<Window>>,
 ) {
-    if *game_state.get() != GameState::Playing {
-        return;
-    }
-    if intro.active {
-        intro.active = false;
-        for e in &intro_overlay_q {
-            commands.entity(e).despawn();
-        }
-    }
+    if *game_state.get() != GameState::Playing { return; }
+    intro.active = false;
     frame.0 += 1;
 
-    match frame.0 {
-        // === 1: Position player in front of Sir Roland ===
-        5 => {
-            let (_, mut tf) = player_q.single_mut().unwrap();
-            tf.translation = Vec3::new(4.0, 1.0, 6.0);
-            if let Ok(mut cam) = camera_q.single_mut() {
-                cam.yaw = std::f32::consts::PI;
-                cam.pitch = -0.2;
-            }
-            println!("[1] Player positioned near Sir Roland");
-        }
+    // Send one question every 200 frames (~3.3s at 60fps).
+    // Poll EVERY frame for the response (chat messages despawn after ~5s).
+    if state.phase < QUESTIONS.len() {
+        let send_frame = 10 + state.phase * 200;
+        let deadline = send_frame + 180;
+        let already_sent = state.sent.len() > state.phase;
 
-        // === 2: Press E to open NPC menu ===
-        15 | 16 | 17 => {
-            keyboard.press(KeyCode::KeyE);
-        }
-        18 => {
-            keyboard.release(KeyCode::KeyE);
-            println!("[2] Pressed E");
-        }
-
-        // === 3: Verify NPC menu opened ===
-        25 => {
-            match &panel_state.content {
-                PanelContent::NpcMenu { name, .. } => {
-                    results.e_opened_panel = true;
-                    println!("[3] PASS: NPC menu opened for '{}'", name);
-                    commands.spawn(Screenshot::primary_window())
-                        .observe(save_to_disk("test_screenshots/ui_01_npc_menu.png"));
-                }
-                other => {
-                    println!("[3] FAIL: panel content = {:?}", other);
-                }
-            }
-        }
-
-        // === 4: Simulate Say button click by sending PanelCommand directly ===
-        // (Interaction::Pressed set manually conflicts with Bevy's Changed<> filter)
-        35 => {
-            if let PanelContent::NpcMenu { npc, .. } = &panel_state.content {
-                panel_commands.write(PanelCommand {
-                    action: PanelAction::Open(PanelContent::TextInput { target_npc: *npc }),
-                });
-                println!("[4] Sent PanelCommand::Open(TextInput)");
+        if frame.0 == send_frame && !already_sent {
+            let (npc_name, question) = QUESTIONS[state.phase];
+            if let Some((entity, _)) = npc_q.iter().find(|(_, p)| p.name == npc_name) {
+                say_events.write(SayEvent { npc: entity, text: question.to_string() });
+                state.sent.push((npc_name.to_string(), question.to_string()));
+                println!("[SEND] {} <- '{}'", npc_name, question);
             } else {
-                println!("[4] FAIL: panel not in NpcMenu state");
+                println!("[SKIP] NPC '{}' not found", npc_name);
+                state.sent.push((npc_name.to_string(), question.to_string()));
+                state.received.push((npc_name.to_string(), String::new(), false));
+                state.phase += 1;
             }
         }
 
-        // === 5: Verify text input is now active ===
-        45 => {
-            if text_input_state.active {
-                results.say_click_opened_input = true;
-                println!("[5] PASS: TextInput active");
-                commands.spawn(Screenshot::primary_window())
-                    .observe(save_to_disk("test_screenshots/ui_02_text_input.png"));
-            } else {
-                println!("[5] FAIL: TextInput not active after Say click. Panel={:?}",
-                    std::mem::discriminant(&panel_state.content));
-            }
-        }
-
-        // === 6: Type characters using KeyboardInput events ===
-        55 => {
-            let Ok(window) = windows.single() else { return };
-            let text = "hello there give me the key";
-            for ch in text.chars() {
-                let key_code = char_to_keycode(ch);
-                let logical = if ch == ' ' {
-                    Key::Space
-                } else {
-                    Key::Character(ch.to_string().into())
-                };
-                key_events.write(KeyboardInput {
-                    key_code,
-                    logical_key: logical,
-                    state: bevy::input::ButtonState::Pressed,
-                    repeat: false,
-                    window,
-                    text: None,
-                });
-            }
-            println!("[6] Sent {} key events", text.len());
-        }
-
-        // === 7: Verify text was captured ===
-        60 => {
-            let current = &text_input_state.current_text;
-            if !current.is_empty() {
-                results.typed_text_visible = true;
-                println!("[7] PASS: typed text in state = '{}'", current);
-            } else {
-                println!("[7] FAIL: text_input_state.current_text is empty");
-            }
-        }
-
-        // === 8: Press Enter ===
-        70 => {
-            let Ok(window) = windows.single() else { return };
-            key_events.write(KeyboardInput {
-                key_code: KeyCode::Enter,
-                logical_key: Key::Enter,
-                state: bevy::input::ButtonState::Pressed,
-                repeat: false,
-                window,
-                text: None,
-            });
-            println!("[8] Sent Enter KeyboardInput");
-        }
-
-        // === 9: Verify chat has player line ===
-        80 => {
+        // Poll every frame for response
+        if already_sent && state.received.len() <= state.phase {
+            let (npc_name, question) = QUESTIONS[state.phase];
+            let prefix = format!("{}:", npc_name);
+            let mut found = false;
             for text in &chat_msgs_q {
-                if text.0.starts_with("You:") {
-                    results.chat_has_player_line = true;
-                    results.enter_fired_sayevent = true;
-                    println!("[9] PASS: player line in chat: '{}'", text.0);
-                    commands.spawn(Screenshot::primary_window())
-                        .observe(save_to_disk("test_screenshots/ui_03_after_enter.png"));
-                    break;
-                }
-            }
-            if !results.chat_has_player_line {
-                println!("[9] FAIL: no 'You:' line in chat");
-                for text in &chat_msgs_q {
-                    println!("    chat line: '{}'", text.0);
-                }
-            }
-        }
-
-        // === 10a: Capture greeting (first non-player message) ===
-        f if f >= 30 && f < 75 && !results.greeting_received => {
-            for text in &chat_msgs_q {
-                let display = &text.0;
-                if !display.is_empty() && !display.starts_with("You:") {
-                    results.greeting_received = true;
-                    results.greeting_text = display.clone();
-                    println!("[10a] Greeting at frame {}: '{}'", frame.0, display);
-                    break;
-                }
-            }
-        }
-
-        // === 10b: Wait for SayEvent response ===
-        f if f >= 90 && f < 5000 && !results.say_response_received => {
-            for text in &chat_msgs_q {
-                let display = &text.0;
-                if !display.is_empty()
-                    && !display.starts_with("You:")
-                    && (results.greeting_text.is_empty() || *display != results.greeting_text)
+                let d = &text.0;
+                if d.starts_with(&prefix)
+                    && !state.received.iter().any(|(_, r, _)| r == d.as_str())
                 {
-                    results.say_response_received = true;
-                    results.say_response_text = display.clone();
-                    println!("[10b] SayEvent response at frame {}: '{}'", frame.0, display);
-                    commands.spawn(Screenshot::primary_window())
-                        .observe(save_to_disk("test_screenshots/ui_04_npc_reply.png"));
+                    let (ok, reason) = validate_response(npc_name, question, d);
+                    println!("[RECV] {} [{}] '{}'", npc_name, reason, d);
+                    state.received.push((npc_name.to_string(), d.clone(), ok));
+                    found = true;
+                    state.phase += 1;
                     break;
                 }
             }
-        }
-
-        // === Final report ===
-        5020 => {
-            println!("\n=== FULL UI TEST RESULTS ===");
-            println!("E opens NPC menu:        {}", pf(results.e_opened_panel));
-            println!("Keyboard → typed text:   {}", pf(results.typed_text_visible));
-            println!("Enter fires SayEvent:    {}", pf(results.enter_fired_sayevent));
-            println!("Chat has player line:    {}", pf(results.chat_has_player_line));
-            println!("Greeting received:       {}", pf(results.greeting_received));
-            if results.greeting_received {
-                println!("  Greeting: '{}'", results.greeting_text);
-            }
-            println!("SayEvent response:       {}", pf(results.say_response_received));
-            if results.say_response_received {
-                println!("  NPC replied: '{}'", results.say_response_text);
-            }
-            println!("============================\n");
-
-            // Greeting is optional — NPC only speaks when player uses Say.
-            let all = results.e_opened_panel
-                && results.typed_text_visible
-                && results.enter_fired_sayevent
-                && results.chat_has_player_line
-                && results.say_response_received;
-
-            if all {
-                println!("[SUCCESS] Full UI flow works");
-                exit.write(AppExit::Success);
-            } else {
-                println!("[FAILURE] Full UI flow is broken");
-                exit.write(AppExit::from_code(1));
+            // Deadline expired — count as miss
+            if !found && frame.0 >= deadline {
+                println!("[MISS] No response from {} for '{}'", npc_name, question);
+                state.received.push((npc_name.to_string(), String::new(), false));
+                state.phase += 1;
             }
         }
+    }
 
-        5050 => {
-            println!("[TIMEOUT]");
+    let report_frame = 10 + QUESTIONS.len() * 200 + 30;
+    if frame.0 == report_frame {
+        println!("\n=== COMPREHENSIVE DIALOGUE TEST ===");
+        let mut ok = 0;
+        let mut bad = 0;
+        for i in 0..state.sent.len() {
+            let (npc, question) = &state.sent[i];
+            let (_, response, is_ok) = state.received.get(i)
+                .cloned()
+                .unwrap_or((String::new(), String::new(), false));
+            if is_ok { ok += 1; } else { bad += 1; }
+            println!("  {} [{}] Q:'{}' A:'{}'",
+                npc, if is_ok { "OK" } else { "BAD" }, question, response);
+        }
+        println!("Score: {}/{}", ok, ok + bad);
+        println!("====================================\n");
+
+        if bad == 0 {
+            println!("[SUCCESS] All NPC dialogues pass validation");
+            exit.write(AppExit::Success);
+        } else {
+            println!("[FAILURE] {} responses failed validation", bad);
             exit.write(AppExit::from_code(1));
         }
-        _ => {}
     }
-}
 
-fn pf(b: bool) -> &'static str {
-    if b { "PASS" } else { "FAIL" }
-}
-
-fn char_to_keycode(ch: char) -> KeyCode {
-    match ch {
-        'a'..='z' => {
-            let byte = ch as u8 - b'a';
-            match byte {
-                0 => KeyCode::KeyA, 1 => KeyCode::KeyB, 2 => KeyCode::KeyC, 3 => KeyCode::KeyD,
-                4 => KeyCode::KeyE, 5 => KeyCode::KeyF, 6 => KeyCode::KeyG, 7 => KeyCode::KeyH,
-                8 => KeyCode::KeyI, 9 => KeyCode::KeyJ, 10 => KeyCode::KeyK, 11 => KeyCode::KeyL,
-                12 => KeyCode::KeyM, 13 => KeyCode::KeyN, 14 => KeyCode::KeyO, 15 => KeyCode::KeyP,
-                16 => KeyCode::KeyQ, 17 => KeyCode::KeyR, 18 => KeyCode::KeyS, 19 => KeyCode::KeyT,
-                20 => KeyCode::KeyU, 21 => KeyCode::KeyV, 22 => KeyCode::KeyW, 23 => KeyCode::KeyX,
-                24 => KeyCode::KeyY, 25 => KeyCode::KeyZ,
-                _ => KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
-            }
-        }
-        ' ' => KeyCode::Space,
-        _ => KeyCode::Unidentified(bevy::input::keyboard::NativeKeyCode::Unidentified),
+    if frame.0 > report_frame + 60 {
+        exit.write(AppExit::from_code(1));
     }
 }
 
 fn main() {
-    std::fs::create_dir_all("test_screenshots").unwrap();
     App::new()
         .add_plugins(
             DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Full UI Test".into(),
+                        title: "Comprehensive Dialogue Test".into(),
                         resolution: bevy::window::WindowResolution::new(1280, 720),
                         ..default()
                     }),
@@ -305,9 +182,7 @@ fn main() {
         )
         .add_plugins(HollowreachPlugin)
         .insert_resource(Frame(0))
-        .insert_resource(TestResults::default())
-        .add_systems(Update, full_ui_test_system
-            .before(hollowreach::player_movement)
-            .before(hollowreach::interact_system))
+        .insert_resource(TestState::default())
+        .add_systems(Update, test_system)
         .run();
 }

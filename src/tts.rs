@@ -300,52 +300,80 @@ fn tts_request_system(
 }
 
 /// System that polls for completed TTS audio and plays it.
+/// Marker: this NPC is currently speaking (TTS audio playing).
+/// Prevents overlapping speech from the same character.
+#[derive(Component)]
+pub struct NpcSpeaking;
+
 fn tts_poll_system(
     mut commands: Commands,
     engine: Res<TtsEngine>,
     asset_server: Res<AssetServer>,
     audio_settings: Res<crate::AudioSettings>,
+    npc_transforms: Query<&Transform>,
+    speaking_q: Query<(), With<NpcSpeaking>>,
 ) {
     while let Some(response) = engine.poll() {
         info!("TTS: audio ready at {}", response.audio_path);
 
-        // Load the generated WAV file as a Bevy audio source.
-        // The file is in /tmp, so we need to copy it to an assets-accessible location
-        // or use an absolute path. Bevy's asset server loads from the assets/ directory,
-        // so we copy the file there.
+        // Skip if this NPC is already speaking
+        if speaking_q.get(response.npc_entity).is_ok() {
+            info!("TTS: skipping — NPC {:?} is already speaking", response.npc_entity);
+            let _ = std::fs::remove_file(&response.audio_path);
+            continue;
+        }
+
         let dest_filename = std::path::Path::new(&response.audio_path)
             .file_name()
             .unwrap()
             .to_string_lossy()
             .to_string();
         let dest_path = format!("assets/audio/tts/{}", dest_filename);
-
-        // Ensure the tts audio directory exists
         let _ = std::fs::create_dir_all("assets/audio/tts");
 
-        // Copy the generated WAV to the assets directory
         if let Err(e) = std::fs::copy(&response.audio_path, &dest_path) {
             warn!("TTS: failed to copy audio file: {}", e);
             continue;
         }
 
-        // Load via Bevy asset server
         let audio_handle: Handle<AudioSource> = asset_server.load(format!("audio/tts/{}", dest_filename));
-
-        // Spawn a one-shot audio player entity
-        // TODO: In the future, attach this as spatial audio to the NPC entity
         let speech_vol = audio_settings.effective_speech();
+
+        // Spawn spatial audio at the NPC's position
+        let transform = npc_transforms
+            .get(response.npc_entity)
+            .cloned()
+            .unwrap_or_default();
+
         commands.spawn((
             AudioPlayer::<AudioSource>(audio_handle),
             PlaybackSettings {
                 volume: bevy::audio::Volume::Linear(speech_vol),
+                spatial: true,
                 ..PlaybackSettings::DESPAWN
             },
+            transform,
             TtsAudioPlayback,
         ));
 
-        // Clean up the temp file
+        // Mark NPC as speaking
+        commands.entity(response.npc_entity).insert(NpcSpeaking);
+
         let _ = std::fs::remove_file(&response.audio_path);
+    }
+}
+
+/// Remove NpcSpeaking when TTS audio finishes (entity despawns via DESPAWN mode).
+fn tts_speaking_cleanup(
+    mut commands: Commands,
+    speaking_npcs: Query<(Entity, &NpcSpeaking)>,
+    audio_q: Query<&TtsAudioPlayback>,
+) {
+    // If no TTS audio entities exist, clear all NpcSpeaking markers.
+    if audio_q.is_empty() {
+        for (entity, _) in &speaking_npcs {
+            commands.entity(entity).remove::<NpcSpeaking>();
+        }
     }
 }
 
@@ -512,7 +540,7 @@ impl Plugin for TtsPlugin {
         app.insert_resource(engine)
             .add_message::<TtsRequest>()
             .add_systems(Startup, tts_loading_ui)
-            .add_systems(Update, (tts_request_system, tts_poll_system).chain())
+            .add_systems(Update, (tts_request_system, tts_poll_system, tts_speaking_cleanup).chain())
             .add_systems(Update, tts_loading_ui_update);
     }
 }

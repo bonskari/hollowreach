@@ -1005,6 +1005,7 @@ pub fn setup_scene(
                 PlayerCamera { pitch: 0.0, yaw: 0.0 },
                 Camera3d::default(),
                 Transform::from_xyz(0.0, 0.6, 0.0),
+                bevy::audio::SpatialListener::default(),
             ));
         });
 

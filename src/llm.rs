@@ -449,23 +449,14 @@ fn generate_dialogue(
     prompt.push_str(&req.npc.name);
     prompt.push_str(": ");
 
-    let raw = run_inference(model, ctx, &prompt, 120, None);
+    let raw = run_inference(model, ctx, &prompt, 30, None);
     let result = clean_dialogue_output(&raw, &req.npc.name);
 
     // If the model produced nothing (common with very short inputs like "Hello"),
-    // retry once with a slightly expanded prompt.
+    // retry with higher temperature.
     if result.is_empty() {
         ctx.clear_kv_cache();
-        let mut retry_prompt = String::new();
-        retry_prompt.push_str("<start_of_turn>user\n");
-        retry_prompt.push_str(&system_prompt);
-        retry_prompt.push_str("\n\nA traveler greets you with: ");
-        retry_prompt.push_str(&req.player_text);
-        retry_prompt.push_str(". How do you greet them back?");
-        retry_prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
-        retry_prompt.push_str(&req.npc.name);
-        retry_prompt.push_str(": ");
-        let raw2 = run_inference(model, ctx, &retry_prompt, 120, None);
+        let raw2 = run_inference_temp(model, ctx, &prompt, 50, 1.2);
         return clean_dialogue_output(&raw2, &req.npc.name);
     }
 
@@ -509,8 +500,31 @@ fn clean_dialogue_output(raw: &str, npc_name: &str) -> String {
     // Take only the first line — multi-line output clutters the chat log.
     let first_line = text.lines().next().unwrap_or("").trim();
 
+    // Strip narration in parentheses — model sometimes generates stage
+    // directions like "(A long silence. She gazes...)" instead of speech.
+    let first_line = if first_line.starts_with('(') {
+        // Try to find speech after the parenthetical
+        if let Some(end) = first_line.find(')') {
+            let after = first_line[end + 1..].trim();
+            if after.is_empty() { "" } else { after }
+        } else {
+            "" // Pure narration with no closing paren
+        }
+    } else {
+        first_line
+    };
+
     // Trim quotes if model wrapped the reply
-    let cleaned = first_line.trim_matches('"').trim_matches('\'').trim().to_string();
+    let mut cleaned = first_line.trim_matches('"').trim_matches('\'').trim().to_string();
+
+    // Cap at ~150 chars — truncate at the last sentence boundary.
+    if cleaned.len() > 150 {
+        if let Some(pos) = cleaned[..150].rfind(|c| c == '.' || c == '!' || c == '?') {
+            cleaned.truncate(pos + 1);
+        } else {
+            cleaned.truncate(150);
+        }
+    }
 
     // Reject output that is a leak of prompt instructions / raw prompt content.
     // These markers never belong in in-character dialogue.
@@ -660,17 +674,11 @@ fn run_inference(
 
         // Convert token to text
         if let Ok(piece) = model.token_to_piece(token, &mut decoder, true, None) {
-            output.push_str(&piece);
-            // Stop after the first complete sentence (period/question/exclamation + space or newline).
-            let trimmed = output.trim();
-            if trimmed.len() > 3 {
-                let last_chars: Vec<char> = trimmed.chars().rev().take(2).collect();
-                if matches!(last_chars.as_slice(),
-                    [' ' | '\n', '.' | '!' | '?'] | ['\n', _]
-                ) {
-                    break;
-                }
+            // Stop on newline after we have content.
+            if piece.contains('\n') && !output.trim().is_empty() {
+                break;
             }
+            output.push_str(&piece);
         }
 
         // Prepare next batch
@@ -687,6 +695,63 @@ fn run_inference(
     }
 
     output.trim().to_string()
+}
+
+/// Like run_inference but with a custom temperature (for retries).
+fn run_inference_temp(
+    model: &llama_cpp_2::model::LlamaModel,
+    ctx: &mut llama_cpp_2::context::LlamaContext,
+    prompt: &str,
+    max_tokens: usize,
+    temp: f32,
+) -> String {
+    use llama_cpp_2::llama_batch::LlamaBatch;
+    use llama_cpp_2::model::AddBos;
+    use llama_cpp_2::sampling::LlamaSampler;
+
+    ctx.clear_kv_cache();
+    let tokens = match model.str_to_token(prompt, AddBos::Always) {
+        Ok(t) => t,
+        Err(_) => return String::new(),
+    };
+    let mut batch = LlamaBatch::new(tokens.len().max(1), 1);
+    for (i, &tok) in tokens.iter().enumerate() {
+        let _ = batch.add(tok, i as i32, &[0], i == tokens.len() - 1);
+    }
+    if ctx.decode(&mut batch).is_err() {
+        return String::new();
+    }
+
+    let mut sampler = LlamaSampler::chain_simple([
+        LlamaSampler::temp(temp),
+        LlamaSampler::top_p(0.95, 1),
+        LlamaSampler::top_k(50),
+        LlamaSampler::dist(rand_seed()),
+    ]);
+
+    let mut output = String::new();
+    let mut decoder = encoding_rs::UTF_8.new_decoder();
+    let mut n_cur = tokens.len();
+
+    for _ in 0..max_tokens {
+        let token = sampler.sample(&ctx, -1);
+        sampler.accept(token);
+        if model.is_eog_token(token) { break; }
+        if let Ok(piece) = model.token_to_piece(token, &mut decoder, true, None) {
+            if piece.contains('\n') && !output.trim().is_empty() { break; }
+            output.push_str(&piece);
+        }
+        batch.clear();
+        let _ = batch.add(token, n_cur as i32, &[0], true);
+        n_cur += 1;
+        if ctx.decode(&mut batch).is_err() { break; }
+    }
+    output.trim().to_string()
+}
+
+fn rand_seed() -> u32 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().subsec_nanos()
 }
 
 fn parse_decision(text: &str) -> LlmAction {
