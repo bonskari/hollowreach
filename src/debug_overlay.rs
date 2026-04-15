@@ -17,6 +17,28 @@ pub struct DebugVramText;
 #[derive(Component)]
 pub struct DebugRamText;
 
+#[derive(Component)]
+pub struct DebugLlmText;
+
+/// Latest LLM prompt/context stats, updated each inference.
+/// Uses atomics so the LLM worker thread can update without locking.
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[derive(Resource, Default)]
+pub struct LlmStats {
+    pub last_prompt_tokens: AtomicUsize,
+    pub last_ctx_tokens: AtomicUsize,
+    pub total_requests: AtomicUsize,
+    pub total_rejections: AtomicUsize,
+}
+
+/// Global handle shared with the LLM worker thread.
+pub static LLM_STATS: std::sync::OnceLock<std::sync::Arc<LlmStats>> = std::sync::OnceLock::new();
+
+pub fn llm_stats() -> &'static std::sync::Arc<LlmStats> {
+    LLM_STATS.get_or_init(|| std::sync::Arc::new(LlmStats::default()))
+}
+
 #[derive(Resource)]
 pub struct DebugOverlayState {
     pub visible: bool,
@@ -87,6 +109,12 @@ pub fn setup_debug_overlay(mut commands: Commands) {
             parent.spawn((
                 DebugRamText,
                 Text::new("RAM: --"),
+                font.clone(),
+                color.clone(),
+            ));
+            parent.spawn((
+                DebugLlmText,
+                Text::new("LLM: --"),
                 font,
                 color,
             ));
@@ -114,9 +142,10 @@ pub fn update_debug_overlay(
     time: Res<Time>,
     diagnostics: Res<DiagnosticsStore>,
     mut state: ResMut<DebugOverlayState>,
-    mut fps_q: Query<&mut Text, (With<DebugFpsText>, Without<DebugVramText>, Without<DebugRamText>)>,
-    mut vram_q: Query<&mut Text, (With<DebugVramText>, Without<DebugFpsText>, Without<DebugRamText>)>,
-    mut ram_q: Query<&mut Text, (With<DebugRamText>, Without<DebugFpsText>, Without<DebugVramText>)>,
+    mut fps_q: Query<&mut Text, (With<DebugFpsText>, Without<DebugVramText>, Without<DebugRamText>, Without<DebugLlmText>)>,
+    mut vram_q: Query<&mut Text, (With<DebugVramText>, Without<DebugFpsText>, Without<DebugRamText>, Without<DebugLlmText>)>,
+    mut ram_q: Query<&mut Text, (With<DebugRamText>, Without<DebugFpsText>, Without<DebugVramText>, Without<DebugLlmText>)>,
+    mut llm_q: Query<&mut Text, (With<DebugLlmText>, Without<DebugFpsText>, Without<DebugVramText>, Without<DebugRamText>)>,
 ) {
     if !state.visible {
         return;
@@ -153,6 +182,24 @@ pub fn update_debug_overlay(
     {
         let mut text = vram_q.single_mut().unwrap();
         **text = read_vram_info();
+    }
+
+    // --- LLM stats ---
+    {
+        let stats = llm_stats();
+        let mut text = llm_q.single_mut().unwrap();
+        let total = stats.total_requests.load(Ordering::Relaxed);
+        if total == 0 {
+            **text = "LLM: idle (no requests)".to_string();
+        } else {
+            **text = format!(
+                "LLM: prompt={}/{} tok (req {} / rej {})",
+                stats.last_prompt_tokens.load(Ordering::Relaxed),
+                stats.last_ctx_tokens.load(Ordering::Relaxed),
+                total,
+                stats.total_rejections.load(Ordering::Relaxed),
+            );
+        }
     }
 }
 

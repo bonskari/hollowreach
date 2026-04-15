@@ -387,23 +387,6 @@ fn worker_thread(
         }
     };
 
-    // Create a persistent context — reused for all inference calls
-    let ctx_params = llama_cpp_2::context::params::LlamaContextParams::default()
-        .with_n_ctx(std::num::NonZeroU32::new(2048))
-        .with_n_batch(2048);
-    let mut ctx = match model.new_context(&backend, ctx_params) {
-        Ok(c) => c,
-        Err(e) => {
-            error!("LLM: failed to create context: {e:?}");
-            let _ = loading_tx.send(LlmLoadingStatus {
-                message: "LLM context failed".into(),
-                progress: 1.0,
-            });
-            ready_flag.store(true, Ordering::SeqCst);
-            return;
-        }
-    };
-
     let _ = loading_tx.send(LlmLoadingStatus {
         message: "LLM ready".into(),
         progress: 1.0,
@@ -412,11 +395,19 @@ fn worker_thread(
     ready_flag.store(true, Ordering::SeqCst);
     info!("LLM: model loaded and ready ({})", model_path);
 
+    let make_ctx_params = || llama_cpp_2::context::params::LlamaContextParams::default()
+        .with_n_ctx(std::num::NonZeroU32::new(2048))
+        .with_n_batch(2048);
+
     // Main request loop — check both channels
     loop {
         // Try dialogue first (higher priority — player is waiting)
         match dialogue_rx.try_recv() {
             Ok(req) => {
+                let Ok(mut ctx) = model.new_context(&backend, make_ctx_params()) else {
+                    error!("LLM: failed to create context for dialogue");
+                    continue;
+                };
                 let response =
                     generate_dialogue(&model, &mut ctx, &chat_template, &req);
                 let _ = dialogue_tx.send(DialogueResponse {
@@ -433,6 +424,10 @@ fn worker_thread(
         match decision_rx.try_recv() {
             Ok(req) => {
                 info!("LLM: processing decision for {}", req.npc.name);
+                let Ok(mut ctx) = model.new_context(&backend, make_ctx_params()) else {
+                    error!("LLM: failed to create context for decision");
+                    continue;
+                };
                 let response =
                     generate_decision(&model, &mut ctx, &chat_template, &req);
                 info!("LLM: decision for {}: {:?}", req.npc.name, response);
@@ -514,6 +509,10 @@ fn clean_dialogue_output(raw: &str) -> String {
     ];
     for marker in &leak_markers {
         if lower.contains(marker) {
+            use std::sync::atomic::Ordering;
+            crate::debug_overlay::llm_stats()
+                .total_rejections
+                .fetch_add(1, Ordering::Relaxed);
             crate::game_log::push_llm_error(format!(
                 "dialogue output rejected: prompt leak detected ({marker}): {cleaned:?}"
             ));
@@ -569,8 +568,7 @@ fn run_inference(
     use llama_cpp_2::model::AddBos;
     use llama_cpp_2::sampling::LlamaSampler;
 
-    // Clear KV cache from previous inference
-    ctx.clear_kv_cache();
+    // Context is fresh each call — no need to clear KV cache.
 
     // Tokenize prompt (no extra BOS — chat template already includes it)
     let tokens = match model.str_to_token(prompt, AddBos::Never) {
@@ -613,10 +611,17 @@ fn run_inference(
     samplers.push(LlamaSampler::dist(42));
     let mut sampler = LlamaSampler::chain_simple(samplers);
 
-    info!("LLM: prompt ({} tokens): {:?}...{:?}",
-        tokens.len(),
-        &prompt[..prompt.len().min(100)],
-        &prompt[prompt.len().saturating_sub(60)..]);
+    let n_prompt = tokens.len();
+    let n_ctx = ctx.n_ctx() as usize;
+    info!("LLM: prompt={} tokens, ctx={} tokens, budget={} tokens for generation",
+        n_prompt, n_ctx, n_ctx.saturating_sub(n_prompt));
+    {
+        use std::sync::atomic::Ordering;
+        let stats = crate::debug_overlay::llm_stats();
+        stats.last_prompt_tokens.store(n_prompt, Ordering::Relaxed);
+        stats.last_ctx_tokens.store(n_ctx, Ordering::Relaxed);
+        stats.total_requests.fetch_add(1, Ordering::Relaxed);
+    }
 
     // Generate tokens
     let mut output = String::new();
