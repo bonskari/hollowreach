@@ -499,8 +499,12 @@ fn clean_dialogue_output(raw: &str, npc_name: &str) -> String {
         }
     }
 
-    // Strip end-of-turn markers
-    text = text.replace("<end_of_turn>", "").replace("<eos>", "");
+    // Strip special tokens
+    text = text
+        .replace("<end_of_turn>", "")
+        .replace("</start_of_turn>", "")
+        .replace("<start_of_turn>", "")
+        .replace("<eos>", "");
 
     // Trim quotes if model wrapped the reply
     let trimmed = text.trim().trim_matches('"').trim_matches('\'').trim();
