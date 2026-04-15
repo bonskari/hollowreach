@@ -428,7 +428,7 @@ impl Default for AudioSettings {
             master_volume: 0.8,
             music_volume: 0.5,
             sfx_volume: 0.7,
-            speech_volume: 1.0,
+            speech_volume: 3.0,
         }
     }
 }
