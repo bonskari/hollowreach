@@ -458,7 +458,7 @@ pub fn npc_execute_system(
         ),
         With<NpcBrain>,
     >,
-    mut panel_commands: MessageWriter<crate::panel::PanelCommand>,
+    mut chat_events: MessageWriter<crate::chat_log::PushChatMessage>,
     mut give_events: MessageWriter<crate::inventory::GiveItemEvent>,
     target_transforms: Query<&Transform, Without<NpcBrain>>,
     player_q: Query<Entity, With<Player>>,
@@ -482,15 +482,11 @@ pub fn npc_execute_system(
                     }
                 }
 
-                // Display dialogue using panel system.
+                // Push NPC speech into chat log, not panel.
                 let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
-                let full = format!("{speaker}: \"{text}\"");
-
-                panel_commands.write(crate::panel::PanelCommand {
-                    action: crate::panel::PanelAction::Open(crate::panel::PanelContent::Dialogue {
-                        speaker: speaker.to_string(),
-                        text: full,
-                    }),
+                chat_events.write(crate::chat_log::PushChatMessage {
+                    speaker: speaker.to_string(),
+                    text: text.clone(),
                 });
 
                 // Speak is instant — clear action.
@@ -537,13 +533,9 @@ pub fn npc_execute_system(
                         let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
                         if let NpcAction::Give { text, .. } = action {
                             if !text.is_empty() {
-                                panel_commands.write(crate::panel::PanelCommand {
-                                    action: crate::panel::PanelAction::Open(
-                                        crate::panel::PanelContent::Dialogue {
-                                            speaker: speaker.to_string(),
-                                            text: text.clone(),
-                                        },
-                                    ),
+                                chat_events.write(crate::chat_log::PushChatMessage {
+                                    speaker: speaker.to_string(),
+                                    text: text.clone(),
                                 });
                             }
                         }

@@ -372,19 +372,25 @@ fn worker_thread(
     ready_flag.store(true, Ordering::SeqCst);
     info!("LLM: model loaded and ready ({})", model_path);
 
-    let make_ctx_params = || llama_cpp_2::context::params::LlamaContextParams::default()
+    // Single persistent context — cleared between requests via clear_kv_cache().
+    // Creating a new context per call is too slow (~100ms overhead per allocation).
+    let ctx_params = llama_cpp_2::context::params::LlamaContextParams::default()
         .with_n_ctx(std::num::NonZeroU32::new(2048))
         .with_n_batch(2048);
+    let mut ctx = match model.new_context(&backend, ctx_params) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("LLM: failed to create context: {e:?}");
+            ready_flag.store(true, Ordering::SeqCst);
+            return;
+        }
+    };
 
     // Main request loop — check both channels
     loop {
         // Try dialogue first (higher priority — player is waiting)
         match dialogue_rx.try_recv() {
             Ok(req) => {
-                let Ok(mut ctx) = model.new_context(&backend, make_ctx_params()) else {
-                    error!("LLM: failed to create context for dialogue");
-                    continue;
-                };
                 let response =
                     generate_dialogue(&model, &mut ctx, &chat_template, &req);
                 let _ = dialogue_tx.send(DialogueResponse {
@@ -401,10 +407,6 @@ fn worker_thread(
         match decision_rx.try_recv() {
             Ok(req) => {
                 info!("LLM: processing decision for {}", req.npc.name);
-                let Ok(mut ctx) = model.new_context(&backend, make_ctx_params()) else {
-                    error!("LLM: failed to create context for decision");
-                    continue;
-                };
                 let response =
                     generate_decision(&model, &mut ctx, &chat_template, &req);
                 info!("LLM: decision for {}: {:?}", req.npc.name, response);
@@ -555,7 +557,8 @@ fn run_inference(
     use llama_cpp_2::model::AddBos;
     use llama_cpp_2::sampling::LlamaSampler;
 
-    // Context is fresh each call — no need to clear KV cache.
+    // Clear KV cache from previous inference.
+    ctx.clear_kv_cache();
 
     // Tokenize prompt (add BOS — Gemma models require it for proper generation)
     let tokens = match model.str_to_token(prompt, AddBos::Always) {

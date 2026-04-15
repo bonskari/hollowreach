@@ -45,6 +45,11 @@ path = "tests/test_real_e2e.rs"
 harness = false
 
 [[test]]
+name = "test_multi_npc"
+path = "tests/test_multi_npc.rs"
+harness = false
+
+[[test]]
 name = "test_full_ui"
 path = "tests/test_full_ui.rs"
 harness = false
