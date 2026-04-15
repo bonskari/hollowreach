@@ -450,7 +450,26 @@ fn generate_dialogue(
     prompt.push_str(": ");
 
     let raw = run_inference(model, ctx, &prompt, 120, None);
-    clean_dialogue_output(&raw, &req.npc.name)
+    let result = clean_dialogue_output(&raw, &req.npc.name);
+
+    // If the model produced nothing (common with very short inputs like "Hello"),
+    // retry once with a slightly expanded prompt.
+    if result.is_empty() {
+        ctx.clear_kv_cache();
+        let mut retry_prompt = String::new();
+        retry_prompt.push_str("<start_of_turn>user\n");
+        retry_prompt.push_str(&system_prompt);
+        retry_prompt.push_str("\n\nA traveler greets you with: ");
+        retry_prompt.push_str(&req.player_text);
+        retry_prompt.push_str(". How do you greet them back?");
+        retry_prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
+        retry_prompt.push_str(&req.npc.name);
+        retry_prompt.push_str(": ");
+        let raw2 = run_inference(model, ctx, &retry_prompt, 120, None);
+        return clean_dialogue_output(&raw2, &req.npc.name);
+    }
+
+    result
 }
 
 /// Strip thinking-mode artifacts and surrounding quotes from LLM dialogue output.
@@ -462,6 +481,11 @@ fn clean_dialogue_output(raw: &str, npc_name: &str) -> String {
     let trimmed_start = text.trim_start();
     if trimmed_start.starts_with(&prefix) {
         text = trimmed_start[prefix.len()..].to_string();
+    }
+    // Strip "Traveler:" prefix if model echoed the player's role label
+    let trimmed_start = text.trim_start();
+    if trimmed_start.starts_with("Traveler: ") || trimmed_start.starts_with("Traveler:") {
+        text = trimmed_start[trimmed_start.find(':').unwrap() + 1..].trim_start().to_string();
     }
 
     // Remove channel tags and everything before the actual dialogue
@@ -630,12 +654,17 @@ fn run_inference(
 
         // Convert token to text
         if let Ok(piece) = model.token_to_piece(token, &mut decoder, true, None) {
-            // Stop on newline — but only after we have some output, so a
-            // leading newline doesn't truncate the reply to empty.
-            if piece.contains('\n') && !output.trim().is_empty() {
-                break;
-            }
             output.push_str(&piece);
+            // Stop after the first complete sentence (period/question/exclamation + space or newline).
+            let trimmed = output.trim();
+            if trimmed.len() > 3 {
+                let last_chars: Vec<char> = trimmed.chars().rev().take(2).collect();
+                if matches!(last_chars.as_slice(),
+                    [' ' | '\n', '.' | '!' | '?'] | ['\n', _]
+                ) {
+                    break;
+                }
+            }
         }
 
         // Prepare next batch

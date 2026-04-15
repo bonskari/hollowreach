@@ -1729,11 +1729,13 @@ pub fn interact_system(
 pub fn handle_say_event(
     mut say_events: MessageReader<text_input::SayEvent>,
     mut chat_events: MessageWriter<chat_log::PushChatMessage>,
+    mut tts_events: MessageWriter<tts::TtsRequest>,
     llm_engine: Option<Res<llm::LlmEngine>>,
     personality_q: Query<&NpcPersonality>,
     npc_inv_q: Query<&inventory::NpcInventory>,
     npc_mem_q: Query<&npc_memory::NpcMemory>,
     mut decision_state_q: Query<&mut npc_ai::NpcDecisionState>,
+    player_q: Query<Entity, With<Player>>,
 ) {
     for event in say_events.read() {
         // Invalidate NPC's context hash so the next autonomous tick
@@ -1747,6 +1749,15 @@ pub fn handle_say_event(
             speaker: "You".to_string(),
             text: event.text.clone(),
         });
+
+        // Speak player's text aloud via TTS
+        if let Ok(player_entity) = player_q.single() {
+            tts_events.write(tts::TtsRequest {
+                text: event.text.clone(),
+                voice_profile: "test_adam".to_string(),
+                npc_entity: player_entity,
+            });
+        }
 
         // Send to LLM for NPC response
         if let Some(ref engine) = llm_engine {
