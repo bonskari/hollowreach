@@ -455,22 +455,21 @@ pub fn npc_execute_system(
         };
 
         match action {
-            NpcAction::Speak(text) | NpcAction::SpeakTo { text, .. } => {
-                // Update look-at target when speaking to a specific entity.
-                if let NpcAction::SpeakTo { target, .. } = action {
-                    if let Some(ref mut la) = look_at {
-                        la.target = Some(*target);
-                    }
-                }
+            NpcAction::Speak(_text) => {
+                // NPC talking to themselves — no chat output. Silent action.
+                state.current_action = None;
+            }
 
-                // Push NPC speech into chat log, not panel.
+            NpcAction::SpeakTo { target, text } => {
+                // Speaking TO someone — show in chat.
+                if let Some(ref mut la) = look_at {
+                    la.target = Some(*target);
+                }
                 let speaker = interactable.map(|i| i.name.as_str()).unwrap_or("NPC");
                 chat_events.write(crate::chat_log::PushChatMessage {
                     speaker: speaker.to_string(),
                     text: text.clone(),
                 });
-
-                // Speak is instant — clear action.
                 state.current_action = None;
             }
 
