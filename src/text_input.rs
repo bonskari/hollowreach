@@ -136,14 +136,9 @@ pub fn text_input_system(
                         });
                     }
                 }
-                // Unfreeze NPC
-                if let Some(npc) = state.target_npc {
-                    commands.entity(npc).remove::<crate::npc_ai::NpcInteracting>();
-                }
-                deactivate_text_input(&mut state);
-                panel_commands.write(crate::panel::PanelCommand {
-                    action: crate::panel::PanelAction::Close,
-                });
+                // Clear the typed text but keep the input open for continuous conversation.
+                // NPC stays frozen (NpcInteracting) until player presses Esc.
+                state.current_text.clear();
 
                 // Reset blink timer
                 blink_timer.timer.reset();

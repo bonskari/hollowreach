@@ -13,6 +13,7 @@ use std::f32::consts::PI;
 pub mod chat_log;
 pub mod context;
 pub mod debug_overlay;
+pub mod game_log;
 pub mod interactions;
 pub mod inventory;
 pub mod llm;
@@ -640,6 +641,7 @@ impl Plugin for HollowreachPlugin {
             .add_plugins(llm::LlmPlugin)
             .add_plugins(npc_memory::NpcMemoryPlugin)
             .add_plugins(chat_log::ChatLogPlugin)
+            .add_plugins(game_log::GameLogPlugin)
             .add_plugins(interactions::InteractionPlugin)
             .add_plugins(context::ContextAreaPlugin)
             .add_plugins(panel::PanelPlugin)
@@ -1789,10 +1791,14 @@ pub fn llm_dialogue_poll_system(
     mut chat_events: MessageWriter<chat_log::PushChatMessage>,
     mut tts_events: MessageWriter<tts::TtsRequest>,
     personality_q: Query<&NpcPersonality>,
+    log: Option<Res<game_log::GameLog>>,
 ) {
     let Some(engine) = llm_engine else { return };
 
     while let Some(response) = engine.poll_dialogue() {
+        if let Some(ref log) = log {
+            log.log_action("LLM_RAW", &format!("npc_entity={:?} text={:?}", response.npc_entity, response.text));
+        }
         if response.text.is_empty() {
             continue;
         }
