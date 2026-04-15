@@ -79,14 +79,16 @@ impl Plugin for ChatLogPlugin {
 // ---------------------------------------------------------------------------
 
 fn setup_chat_log(mut commands: Commands) {
+    // Chat log at the bottom of the screen. NPC activation panel sits above it.
+    // Stack so newest appears closest to the bottom, older ones rise up.
     commands.spawn((
         ChatLogRoot,
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(24.0),
+            bottom: Val::Px(24.0),
             left: Val::Px(0.0),
             right: Val::Px(0.0),
-            flex_direction: FlexDirection::ColumnReverse, // newest at bottom of column (closest to crosshair)
+            flex_direction: FlexDirection::Column, // oldest on top, newest at bottom
             align_items: AlignItems::Center,
             row_gap: Val::Px(LINE_SPACING),
             ..default()

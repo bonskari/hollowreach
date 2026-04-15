@@ -150,7 +150,7 @@ fn setup_panel(mut commands: Commands, ui: Res<ui_helpers::UiAssets>) {
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
                 right: Val::Px(0.0),
-                bottom: Val::Px(120.0),
+                bottom: Val::Px(260.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()

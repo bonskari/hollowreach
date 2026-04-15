@@ -1621,33 +1621,8 @@ pub fn interact_system(
             .map(|p| p.role.clone())
             .unwrap_or_default();
 
-        // Request LLM greeting — will appear in dialogue panel when ready
+        // No automatic greeting — NPC speaks only when player uses Say.
         let greeting = "";
-        if let Some(ref engine) = llm_engine {
-            if let Some(personality) = opt_personality {
-                let inv = npc_inv_q.get(target_entity).map(|i| i.items.clone()).unwrap_or_default();
-                let mem = npc_mem_q.get(target_entity).map(|m| m.format_for_prompt(10)).unwrap_or_default();
-                let npc_ctx = llm::NpcContext {
-                    name: personality.name.clone(),
-                    role: personality.role.clone(),
-                    traits: personality.traits.clone(),
-                    backstory: personality.backstory.clone(),
-                    speech_style: personality.speech_style.clone(),
-                    knowledge: personality.knowledge.clone(),
-                    goals: personality.goals.clone(),
-                    likes: personality.likes.clone(),
-                    dislikes: personality.dislikes.clone(),
-                    inventory: inv,
-                    memories: mem,
-                };
-                engine.request_dialogue(llm::DialogueRequest {
-                    npc: npc_ctx,
-                    player_text: "*walks up and looks at you, waiting*".into(),
-                    history: vec![],
-                    npc_entity: target_entity,
-                });
-            }
-        }
 
         panel_commands.write(panel::PanelCommand {
             action: panel::PanelAction::Open(panel::PanelContent::NpcMenu {

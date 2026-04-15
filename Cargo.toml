@@ -44,3 +44,8 @@ name = "test_real_e2e"
 path = "tests/test_real_e2e.rs"
 harness = false
 
+[[test]]
+name = "test_full_ui"
+path = "tests/test_full_ui.rs"
+harness = false
+

@@ -464,13 +464,12 @@ fn generate_dialogue(
     let system_prompt = build_system_prompt(&req.npc);
 
     // Build Gemma 4 chat format manually.
-    // Prefill model output with `"` to force direct speech and avoid thinking mode.
     let mut prompt = String::new();
     prompt.push_str("<start_of_turn>user\n");
     prompt.push_str(&system_prompt);
-    prompt.push_str("\n\nThe young wanderer says: \"");
+    prompt.push_str("\n\nA traveler approaches and says: \"");
     prompt.push_str(&req.player_text);
-    prompt.push_str("\"\n\nReply with only your spoken words, in character. No thinking, no narration, no quotes around your reply.");
+    prompt.push_str("\"\n\nWhat do you say back to them? Reply in character with 1-2 sentences of spoken dialogue only.");
     prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
 
     let raw = run_inference(model, ctx, &prompt, 150, None);
@@ -611,8 +610,8 @@ fn run_inference(
 
         // Convert token to text
         if let Ok(piece) = model.token_to_piece(token, &mut decoder, true, None) {
-            // Stop on double newline (end of response)
-            if piece.contains("\n\n") {
+            // Stop on newline for dialogue — reply is a single line
+            if piece.contains('\n') {
                 break;
             }
             output.push_str(&piece);
