@@ -5,7 +5,7 @@
 //! `SayEvent`), or Escape to cancel. While the input is active, player movement and
 //! mouse look are disabled.
 
-use bevy::input::keyboard::KeyboardInput;
+use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::prelude::*;
 
 // ---------------------------------------------------------------------------
@@ -178,11 +178,17 @@ pub fn text_input_system(
                 state.current_text.pop();
             }
             _ => {
-                // Map key codes to characters, respecting shift
-                if let Some(ch) = key_to_char(event.key_code, keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight)) {
-                    // Limit input length to prevent overflow
+                // Use the OS-provided logical key so the player's actual
+                // keyboard layout (Finnish, German, etc.) is respected.
+                if let Key::Character(ref s) = event.logical_key {
+                    for ch in s.chars() {
+                        if !ch.is_control() && state.current_text.len() < 256 {
+                            state.current_text.push(ch);
+                        }
+                    }
+                } else if matches!(event.logical_key, Key::Space) {
                     if state.current_text.len() < 256 {
-                        state.current_text.push(ch);
+                        state.current_text.push(' ');
                     }
                 }
             }

@@ -179,7 +179,7 @@ impl LlmEngine {
 fn build_system_prompt(npc: &NpcContext) -> String {
     let mut lines = Vec::new();
     lines.push(format!(
-        "You are {}, {} in the village of Hollowreach.",
+        "Your name is {}. Your role: {}. You live in the village of Hollowreach.",
         npc.name, npc.role
     ));
     lines.push(format!("Backstory: {}", npc.backstory));
@@ -482,13 +482,11 @@ fn clean_dialogue_output(raw: &str) -> String {
 
     // Remove channel tags and everything before the actual dialogue
     if let Some(pos) = text.find("<|channel>") {
-        // Find the next "Final Answer:" or just take the last paragraph after a blank line
         if let Some(after_thought) = text[pos..].find("Final Answer:") {
             text = text[pos + after_thought + "Final Answer:".len()..].trim().to_string();
         } else if let Some(blank_line) = text.rfind("\n\n") {
             text = text[blank_line + 2..].trim().to_string();
         } else {
-            // No way to recover — return empty
             return String::new();
         }
     }
@@ -497,10 +495,33 @@ fn clean_dialogue_output(raw: &str) -> String {
     text = text.replace("<end_of_turn>", "").replace("<eos>", "");
 
     // Trim quotes if model wrapped the reply
-    let trimmed = text.trim();
-    let trimmed = trimmed.trim_matches('"').trim_matches('\'').trim();
+    let trimmed = text.trim().trim_matches('"').trim_matches('\'').trim();
+    let cleaned = trimmed.to_string();
 
-    trimmed.to_string()
+    // Reject output that is a leak of prompt instructions / raw prompt content.
+    // These markers never belong in in-character dialogue.
+    let lower = cleaned.to_lowercase();
+    let leak_markers = [
+        "the traveler says to you",
+        "reply in character",
+        "respond in character",
+        "spoken words, no more than",
+        "speak naturally in your character",
+        "no more than 2 sentences",
+        "never narrate",
+        "never describe actions",
+        "no narration",
+    ];
+    for marker in &leak_markers {
+        if lower.contains(marker) {
+            crate::game_log::push_llm_error(format!(
+                "dialogue output rejected: prompt leak detected ({marker}): {cleaned:?}"
+            ));
+            return String::new();
+        }
+    }
+
+    cleaned
 }
 
 fn generate_decision(
