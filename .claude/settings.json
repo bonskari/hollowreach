@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(timeout 90 /home/b1s/chatterbox-venv/bin/python3 scripts/tts_worker.py)",
+      "Bash(./test.sh cargo:*)",
+      "Read(//home/b1s/chatterbox-venv/bin/**)",
+      "Bash(/home/b1s/chatterbox-venv/bin/pip3 install:*)",
+      "Bash(cargo check:*)",
+      "Read(//home/b1s/.cargo/registry/src/**)",
+      "Bash(vulkaninfo --summary)",
+      "Bash(pacman -Ss cuda)"
+    ]
+  }
+}

@@ -228,16 +228,47 @@ fn spawn_content(
                     // Divider
                     ui_helpers::spawn_divider(content, ui);
 
-                    // Buttons
+                    // Buttons — above the text input (Say replaced by the input itself).
                     content.spawn(Node {
                         flex_direction: FlexDirection::Row,
                         justify_content: JustifyContent::Center,
                         column_gap: Val::Px(8.0),
+                        margin: UiRect::bottom(Val::Px(8.0)),
                         ..default()
                     }).with_children(|row| {
-                        ui_helpers::spawn_button(row, ui, "Say", PanelButton { action: PanelButtonAction::Say });
                         ui_helpers::spawn_button(row, ui, "Give Item", PanelButton { action: PanelButtonAction::GiveItem });
                         ui_helpers::spawn_button_muted(row, ui, "Nevermind", PanelButton { action: PanelButtonAction::Nevermind });
+                    });
+
+                    // Inline text input — active as soon as the panel opens.
+                    content.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            align_items: AlignItems::Center,
+                            min_height: Val::Px(28.0),
+                            min_width: Val::Px(PANEL_MIN_WIDTH - 80.0),
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.04, 0.03, 0.08, 0.7)),
+                    )).with_children(|input_row| {
+                        input_row.spawn((
+                            Text::new("> "),
+                            TextFont { font_size: 17.0, ..default() },
+                            TextColor(Color::srgb(0.6, 0.55, 0.45)),
+                        ));
+                        input_row.spawn((
+                            text_input::TextInputDisplay,
+                            Text::new(""),
+                            TextFont { font_size: 17.0, ..default() },
+                            TextColor(Color::srgba(0.9, 0.9, 0.9, 1.0)),
+                        ));
+                        input_row.spawn((
+                            text_input::TextInputCursor,
+                            Text::new("|"),
+                            TextFont { font_size: 17.0, ..default() },
+                            TextColor(Color::srgba(0.95, 0.82, 0.4, 1.0)),
+                        ));
                     });
                 });
             });
@@ -379,13 +410,19 @@ fn make_dialogue_timer(content: &PanelContent) -> Option<Timer> {
 }
 
 fn activate_content(content: &PanelContent, text_input_state: &mut text_input::TextInputState) {
-    if let PanelContent::TextInput { target_npc } = content {
-        text_input::activate_text_input(text_input_state, *target_npc);
+    match content {
+        PanelContent::TextInput { target_npc } | PanelContent::NpcMenu { npc: target_npc, .. } => {
+            text_input::activate_text_input(text_input_state, *target_npc);
+        }
+        _ => {}
     }
 }
 
 fn deactivate_content(content: &PanelContent, text_input_state: &mut text_input::TextInputState) {
-    if matches!(content, PanelContent::TextInput { .. }) {
+    if matches!(
+        content,
+        PanelContent::TextInput { .. } | PanelContent::NpcMenu { .. }
+    ) {
         text_input::deactivate_text_input(text_input_state);
     }
 }

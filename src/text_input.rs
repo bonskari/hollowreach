@@ -33,6 +33,9 @@ pub struct TextInputState {
     pub current_text: String,
     /// The NPC entity the player is talking to.
     pub target_npc: Option<Entity>,
+    /// True on the first frame after activation — skips the key event
+    /// that triggered the panel to open (e.g. the E used to interact).
+    pub just_activated: bool,
 }
 
 impl Default for TextInputState {
@@ -41,6 +44,7 @@ impl Default for TextInputState {
             active: false,
             current_text: String::new(),
             target_npc: None,
+            just_activated: false,
         }
     }
 }
@@ -87,6 +91,7 @@ pub fn activate_text_input(state: &mut TextInputState, npc_entity: Entity) {
     state.active = true;
     state.current_text.clear();
     state.target_npc = Some(npc_entity);
+    state.just_activated = true;
 }
 
 /// Closes the text input box and clears state.
@@ -115,6 +120,14 @@ pub fn text_input_system(
     mut esc_consumed: ResMut<crate::EscapeConsumed>,
 ) {
     if !state.active {
+        return;
+    }
+
+    // Skip events on the first frame after activation — the E that opened
+    // the panel is still in the event buffer and would be captured otherwise.
+    if state.just_activated {
+        state.just_activated = false;
+        keyboard_events.clear();
         return;
     }
 

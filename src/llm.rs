@@ -467,12 +467,12 @@ fn generate_dialogue(
     let mut prompt = String::new();
     prompt.push_str("<start_of_turn>user\n");
     prompt.push_str(&system_prompt);
-    prompt.push_str("\n\nA traveler approaches and says: \"");
+    prompt.push_str("\n\nThe traveler says to you: \"");
     prompt.push_str(&req.player_text);
-    prompt.push_str("\"\n\nWhat do you say back to them? Reply in character with 1-2 sentences of spoken dialogue only.");
+    prompt.push_str("\"\n\nRespond in character with what you say out loud. Reply with only the spoken words, no more than 2 sentences.");
     prompt.push_str("<end_of_turn>\n<start_of_turn>model\n");
 
-    let raw = run_inference(model, ctx, &prompt, 150, None);
+    let raw = run_inference(model, ctx, &prompt, 120, None);
     clean_dialogue_output(&raw)
 }
 
@@ -555,7 +555,9 @@ fn run_inference(
     let tokens = match model.str_to_token(prompt, AddBos::Never) {
         Ok(t) => t,
         Err(e) => {
-            error!("LLM: tokenization failed: {e:?}");
+            let msg = format!("tokenization failed: {e:?}");
+            error!("LLM: {msg}");
+            crate::game_log::push_llm_error(msg);
             return String::new();
         }
     };
@@ -569,7 +571,9 @@ fn run_inference(
 
     // Decode prompt
     if let Err(e) = ctx.decode(&mut batch) {
-        error!("LLM: prompt decode failed: {e:?}");
+        let msg = format!("prompt decode failed: {e:?}");
+        error!("LLM: {msg}");
+        crate::game_log::push_llm_error(msg);
         return String::new();
     }
 
@@ -610,8 +614,9 @@ fn run_inference(
 
         // Convert token to text
         if let Ok(piece) = model.token_to_piece(token, &mut decoder, true, None) {
-            // Stop on newline for dialogue — reply is a single line
-            if piece.contains('\n') {
+            // Stop on newline — but only after we have some output, so a
+            // leading newline doesn't truncate the reply to empty.
+            if piece.contains('\n') && !output.trim().is_empty() {
                 break;
             }
             output.push_str(&piece);
@@ -623,7 +628,9 @@ fn run_inference(
         n_cur += 1;
 
         if let Err(e) = ctx.decode(&mut batch) {
-            error!("LLM: decode failed at token {n_cur}: {e:?}");
+            let msg = format!("decode failed at token {n_cur}: {e:?}");
+            error!("LLM: {msg}");
+            crate::game_log::push_llm_error(msg);
             break;
         }
     }

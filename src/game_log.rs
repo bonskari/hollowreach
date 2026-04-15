@@ -37,8 +37,32 @@ impl GameLog {
         self.append(&format!("[{ts}] {category}: {detail}"));
     }
 
+    pub fn log_error(&self, source: &str, detail: &str) {
+        let ts = chrono_like_now();
+        self.append(&format!("[{ts}] ERROR [{source}]: {detail}"));
+    }
+
     pub fn path(&self) -> &std::path::Path {
         &self.path
+    }
+}
+
+/// Global sink for LLM errors from the worker thread — written to the
+/// current session log at drain time.
+pub static LLM_ERROR_QUEUE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+pub fn push_llm_error(msg: impl Into<String>) {
+    if let Ok(mut q) = LLM_ERROR_QUEUE.lock() {
+        q.push(msg.into());
+    }
+}
+
+fn drain_llm_errors(log: Option<Res<GameLog>>) {
+    let Some(log) = log else { return };
+    if let Ok(mut q) = LLM_ERROR_QUEUE.lock() {
+        for msg in q.drain(..) {
+            log.log_error("LLM", &msg);
+        }
     }
 }
 
@@ -53,7 +77,7 @@ impl Plugin for GameLogPlugin {
         app.add_systems(Startup, init_game_log)
             .add_systems(
                 Update,
-                (log_say_events, log_chat_messages, log_player_interact),
+                (log_say_events, log_chat_messages, log_player_interact, drain_llm_errors),
             );
     }
 }
